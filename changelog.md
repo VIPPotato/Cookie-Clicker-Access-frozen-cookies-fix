@@ -1,5 +1,10 @@
 # Cookie Clicker Access - Changelog
 
+## Unreleased
+
+- Fixed Golden Cookie and Reindeer clicking incompatibility with Frozen Cookies and other automation mods by wrapping `Game.shimmer.prototype.pop` instead of `Game.shimmerTypes.*.popFunc`
+- Preserved vanilla `Game.shimmerTypes.golden.popFunc` so third-party mods using `eval()` stringification do not destroy closure variables and crash with `ReferenceError: MOD is not defined`
+
 ## Version 13.8
 
 - Simplified milk display under big cookie to show just rank and type (detailed info already in stats menu)
