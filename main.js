@@ -680,8 +680,8 @@ Game.registerMod("nvda accessibility", {
 				MOD.filterUnownedBuildings();
 			}, 100);
 		});
-		Game.Notify('Accessibility Enhanced', 'Version 13.7', [10, 0], 6);
-		this.announce('NVDA Accessibility mod version 13.7 loaded.');
+		Game.Notify('Accessibility Enhanced', 'Version 13.9', [10, 0], 6);
+		this.announce('NVDA Accessibility mod version 13.9 loaded.');
 	},
 	overrideDrawBuildings: function() {
 		var MOD = this;
@@ -2061,25 +2061,35 @@ Game.registerMod("nvda accessibility", {
 	},
 	setupGoldenCookieAnnouncements: function() {
 		var MOD = this;
-		// Override pop functions to announce non-buff effects via live region
-		// Buff effects are handled by updateBuffTracker
-		if (Game.shimmerTypes && Game.shimmerTypes.golden) {
-			var orig = Game.shimmerTypes.golden.popFunc;
-			Game.shimmerTypes.golden.popFunc = function(me) {
-				// Temporarily hook Game.Popup to capture the effect text
+		// Wrap Game.shimmer.prototype.pop instead of Game.shimmerTypes.*.popFunc.
+		// Frozen Cookies runs eval() with toString() on Game.shimmerTypes.golden.popFunc,
+		// which breaks closure scope if wrapped directly, causing ReferenceErrors that prevent
+		// golden cookies from being clicked.
+		if (Game.shimmer && Game.shimmer.prototype && !Game.shimmer.prototype._a11yPopWrapped) {
+			var origShimmerPop = Game.shimmer.prototype.pop;
+			Game.shimmer.prototype._a11yPopWrapped = true;
+			Game.shimmer.prototype.pop = function(event) {
+				var me = this;
 				var capturedPopup = '';
+				var capturedNotify = '';
 				var origPopup = Game.Popup;
+				var origNotify = Game.Notify;
+
 				Game.Popup = function(text, x, y) {
 					capturedPopup = text;
 					origPopup.call(Game, text, x, y);
 				};
+				Game.Notify = function(title, desc, pic, quick, noLog) {
+					capturedNotify = title + '. ' + desc;
+					origNotify.call(Game, title, desc, pic, quick, noLog);
+				};
 
 				MOD.shimmerPopupActive = true;
 				var prevCookies = Game.cookies;
-				var r = orig.call(this, me);
+				var r = origShimmerPop.apply(this, arguments);
 
-				// Restore original Game.Popup
 				Game.Popup = origPopup;
+				Game.Notify = origNotify;
 				MOD.shimmerPopupActive = false;
 
 				// Mark as clicked so we don't announce "has faded" for clicked shimmers
@@ -2087,64 +2097,45 @@ Game.registerMod("nvda accessibility", {
 					MOD.announcedShimmers[me.id].clicked = true;
 				}
 
-				// Check if this is a storm drop
-				var isStormDrop = me.forceObj && me.forceObj.type === 'cookie storm drop';
-
-				// Count storm clicks and track cookies earned for summary
-				if (isStormDrop && MOD.cookieStormActive) {
-					MOD.stormClickCount++;
-					MOD.stormCookiesEarned += (Game.cookies - prevCookies);
-					return r; // Suppress individual announcement
-				}
-
-				var lastEffect = Game.shimmerTypes.golden.last;
-
-				// Handle chain cookie results — announce each link
-				if (lastEffect === 'chain cookie') {
-					if (capturedPopup) {
-						var text = MOD.stripHtml(capturedPopup);
-						if (!MOD.cookieChainActive) {
-							// First chain link — explain what's happening
-							MOD.cookieChainActive = true;
-							MOD.announceUrgent(text + '. Click the next golden cookie to continue the chain.');
-						} else {
-							MOD.announceUrgent(text);
-						}
+				if (me.type === 'golden') {
+					// Check if this is a storm drop
+					var isStormDrop = me.forceObj && me.forceObj.type === 'cookie storm drop';
+					if (isStormDrop && MOD.cookieStormActive) {
+						MOD.stormClickCount++;
+						MOD.stormCookiesEarned += (Game.cookies - prevCookies);
+						return r; // Suppress individual announcement
 					}
-					return r;
+
+					var lastEffect = Game.shimmerTypes.golden ? Game.shimmerTypes.golden.last : '';
+
+					// Handle chain cookie results — announce each link
+					if (lastEffect === 'chain cookie') {
+						if (capturedPopup) {
+							var text = MOD.stripHtml(capturedPopup);
+							if (!MOD.cookieChainActive) {
+								MOD.cookieChainActive = true;
+								MOD.announceUrgent(text + '. Click the next golden cookie to continue the chain.');
+							} else {
+								MOD.announceUrgent(text);
+							}
+						}
+						return r;
+					}
+
+					// Non-buff effects: announce the effect text from the game's popup
+					// Buff effects: handled by updateBuffTracker, no announcement needed here
+					var nonBuffEffects = ['multiply cookies', 'ruin cookies', 'blab',
+					                      'free sugar lump', 'cookie storm drop'];
+					if (capturedPopup && nonBuffEffects.indexOf(lastEffect) !== -1) {
+						MOD.announceUrgent(MOD.stripHtml(capturedPopup));
+					}
+				} else if (me.type === 'reindeer') {
+					// Announce the reindeer reward via live region
+					if (capturedNotify) {
+						MOD.announceUrgent(MOD.stripHtml(capturedNotify));
+					}
 				}
 
-				// Non-buff effects: announce the effect text from the game's popup
-				// Buff effects: handled by updateBuffTracker, no announcement needed here
-				var nonBuffEffects = ['multiply cookies', 'ruin cookies', 'blab',
-				                      'free sugar lump', 'cookie storm drop'];
-				if (capturedPopup && nonBuffEffects.indexOf(lastEffect) !== -1) {
-					MOD.announceUrgent(MOD.stripHtml(capturedPopup));
-				}
-				return r;
-			};
-		}
-		if (Game.shimmerTypes && Game.shimmerTypes.reindeer) {
-			var origR = Game.shimmerTypes.reindeer.popFunc;
-			Game.shimmerTypes.reindeer.popFunc = function(me) {
-				if (MOD.announcedShimmers[me.id]) {
-					MOD.announcedShimmers[me.id].clicked = true;
-				}
-				// Capture Game.Notify to get the reward text
-				var capturedNotify = '';
-				var origNotify = Game.Notify;
-				Game.Notify = function(title, desc, pic, quick, noLog) {
-					capturedNotify = title + '. ' + desc;
-					origNotify.call(Game, title, desc, pic, quick, noLog);
-				};
-				MOD.shimmerPopupActive = true;
-				var r = origR.call(this, me);
-				Game.Notify = origNotify;
-				MOD.shimmerPopupActive = false;
-				// Announce the reindeer reward via live region
-				if (capturedNotify) {
-					MOD.announceUrgent(MOD.stripHtml(capturedNotify));
-				}
 				return r;
 			};
 		}

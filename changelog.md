@@ -1,5 +1,12 @@
 # Cookie Clicker Access - Changelog
 
+## Version 13.9
+
+- Fixed Golden Cookie and Reindeer clicking incompatibility with Frozen Cookies by wrapping `Game.shimmer.prototype.pop` instead of `Game.shimmerTypes.*.popFunc`
+- Preserved vanilla `Game.shimmerTypes.golden.popFunc` so third-party mods using `eval()` stringification (such as Frozen Cookies) do not destroy closure variables and crash with `ReferenceError: MOD is not defined`
+- Ensured automated clickers, manual clicks, and accessible shimmer buttons all trigger live NVDA reward announcements without conflict
+- Updated documentation with an automation compatibility section, mod matrix, and repository references
+
 ## Version 13.8
 
 - Simplified milk display under big cookie to show just rank and type (detailed info already in stats menu)
