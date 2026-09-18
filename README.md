@@ -65,15 +65,19 @@ Frozen Cookies replaces `Game.Popup` references inside `Game.shimmerTypes.golden
 
 ## Getting Started & Landmark Navigation
 
-When loaded, the mod announces `"NVDA Accessibility mod version 13.8 loaded."`
+When loaded, the mod announces `"NVDA Accessibility mod version 13.10 loaded."`
 
 The game interface is organized into accessible landmark sections using clean HTML headings. Use your screen reader's single-key navigation (such as pressing **H** in NVDA browse mode) to quickly jump between sections:
 
 * **News (H2):** The game's news ticker (focusable; live announcements muted to avoid speech spam).
-* **Store (H2):** Available upgrades and building purchase options.
-* **Buildings (H3):** Building purchase buttons with production statistics and cost.
+* **Store (H2):** Accessible store section containing:
+  * **Special & Season Switches (H3):** Seasonal triggers (Lovesick, Festive, Bunny, Ghostly) with unlock progress, Golden Switch, Shimmering Veil, Rigidel, and selectors.
+  * **Research & Tech Upgrades (H3):** Bingo Center research upgrades.
+  * **Vaulted Upgrades (H3):** Upgrades placed in the vault to prevent accidental purchase.
+  * **Available Upgrades (H3):** Standard upgrades with count indicator (`Available Upgrades (X available)`), "Buy all available upgrades" button, and status notes.
+  * **Buildings (H3):** Building purchase buttons with production statistics and cost.
 * **Wrinklers (H2):** Active wrinklers with buttons to inspect sucked cookies and pop them.
-* **Status and Effects (H2):** Current game state — Dragon level and auras, Santa, active season, Grandmapocalypse stage, Elder Pledge status, Golden Switch, Shimmering Veil, and active buffs with countdown timers.
+* **Status and Effects (H2):** Current game state — Dragon level and auras, Santa, active season with drop progress, Grandmapocalypse stage, Elder Pledge status, Golden Switch, Shimmering Veil, and active buffs with countdown timers.
 * **Shimmers (H2):** Active Golden Cookies, Wrath Cookies, and Reindeer with time remaining.
 
 ---
@@ -84,7 +88,10 @@ The game interface is organized into accessible landmark sections using clean HT
 The Big Cookie has an accessible label and can be clicked normally using your screen reader activation key or mouse. Below it are accessible text readouts for **Cookies per Click** and **Milk Progress**.
 
 ### 2. Buying Upgrades
-Upgrades appear in the Store section. Each upgrade is labeled with its name, cost, and effect description. If an upgrade is currently unaffordable, an estimated "time until affordable" countdown is announced. Tab to the upgrade and press **Enter** or **Space** to purchase.
+Upgrades appear in the Store section, divided into clean categories:
+* **Special & Season Switches:** Shows toggle switches and season switches. Season switch buttons announce current seasonal drop progress (e.g. `0/7 heart biscuits unlocked`, `14/14 Santa's gifts, 7/7 reindeer cookies unlocked`), active season status with countdown timer, and cancel options.
+* **Available Upgrades:** Standard upgrades labeled with name, cost, and effect description. If an upgrade is currently unaffordable, an estimated "time until affordable" countdown is announced. If all standard upgrades are owned (0 available), a clear note explains that all standard upgrades are bought.
+* **Buy All Upgrades Button:** Announces affordable and total counts (e.g. `Buy all available upgrades (3 affordable of 5)`), and speaks the names of all purchased upgrades upon activation.
 
 ### 3. Buying Buildings
 Buildings appear under the **Buildings** heading. Each building shows its name, whether it is affordable, the current cost (adjusted for bulk buy: 1, 10, 100, Max), and the quantity owned. Below each building is an info line with production details. Unlocked buildings are revealed progressively to keep the list clean.

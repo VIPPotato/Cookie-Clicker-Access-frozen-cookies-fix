@@ -1,6 +1,28 @@
 # Cookie Clicker Access - Changelog
 
-## Version 13.9
+## Version 13.10
+
+### Store & Upgrade Navigation
+- Added dedicated `H3` headings for all upgrade store categories:
+  - `Special & Season Switches (H3)` above toggle upgrades (season switches, Golden switch, Shimmering veil, Rigidel, selectors)
+  - `Research & Tech Upgrades (H3)` above Bingo Center research upgrades
+  - `Vaulted Upgrades (H3)` above vaulted upgrades
+  - `Available Upgrades (X available) (H3)` above standard upgrades, showing the total available count
+- Added an informative focusable note directly below "Buy all available upgrades" when 0 standard upgrades are available (`"No standard upgrades available to purchase. All standard upgrades are bought. Check Special & Season Switches above for toggles and seasonal switches."`)
+- Enhanced "Buy all available upgrades" button label to announce affordable and total counts (e.g. `"Buy all available upgrades (0 available)"` or `"Buy all available upgrades (3 affordable of 5)"`), and added voice announcement when clicked with 0 upgrades
+- Added accessible ARIA region landmarks to store sections for clear container navigation
+
+### Seasonal Drop Progress & Biscuit Labels
+- Enhanced seasonal biscuit toggle buttons (Lovesick, Festive, Bunny, Ghostly) to announce seasonal drop progress:
+  - Valentine's Day: `X/7 heart biscuits unlocked`
+  - Christmas: `X/14 Santa's gifts, Y/7 reindeer cookies unlocked`
+  - Easter: `X/20 eggs unlocked`
+  - Halloween: `X/7 halloween cookies unlocked`
+- Seasonal switch buttons announce remaining duration and cancel action when the season is currently active (e.g. `Active season: Valentine's day (23h 45m remaining). Click to cancel season`)
+- Dynamic descriptions via `descFunc()` and `displayFuncWhenOwned()` are now rendered cleanly in focusable upgrade info notes below crates
+- Enhanced Santa panel to announce gifts unlocked (`X of 14 Santa's gifts unlocked`)
+- Active season readout in Status and Effects panel and season start announcements now include seasonal drop progress
+
 
 - Fixed Golden Cookie and Reindeer clicking incompatibility with Frozen Cookies by wrapping `Game.shimmer.prototype.pop` instead of `Game.shimmerTypes.*.popFunc`
 - Preserved vanilla `Game.shimmerTypes.golden.popFunc` so third-party mods using `eval()` stringification (such as Frozen Cookies) do not destroy closure variables and crash with `ReferenceError: MOD is not defined`
