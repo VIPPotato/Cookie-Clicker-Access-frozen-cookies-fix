@@ -538,7 +538,13 @@ Game.registerMod("nvda accessibility", {
 			var before = {};
 			for (var i in Game.UpgradesInStore) {
 				var u = Game.UpgradesInStore[i];
-				if (u && !u.bought) before[u.id] = u.dname || u.name;
+				if (u && !u.bought && u.pool !== 'toggle' && u.pool !== 'tech' && !u.isVaulted()) {
+					before[u.id] = u.dname || u.name;
+				}
+			}
+			if (Object.keys(before).length === 0) {
+				MOD.announce('No upgrades available to purchase');
+				return;
 			}
 			origStoreBuyAll.apply(this, arguments);
 			var bought = [];
@@ -680,8 +686,8 @@ Game.registerMod("nvda accessibility", {
 				MOD.filterUnownedBuildings();
 			}, 100);
 		});
-		Game.Notify('Accessibility Enhanced', 'Version 13.9', [10, 0], 6);
-		this.announce('NVDA Accessibility mod version 13.9 loaded.');
+		Game.Notify('Accessibility Enhanced', 'Version 13.10', [10, 0], 6);
+		this.announce('NVDA Accessibility mod version 13.10 loaded.');
 	},
 	overrideDrawBuildings: function() {
 		var MOD = this;
@@ -1682,6 +1688,14 @@ Game.registerMod("nvda accessibility", {
 		var santaName = (Game.santaLevels && Game.santaLevels[level]) ? Game.santaLevels[level] : 'Santa';
 		heading.textContent = santaName + ', level ' + level + ' of ' + maxLevel;
 		panel.appendChild(heading);
+		// Drops progress
+		if (Game.santaDrops && typeof Game.GetHowManySantaDrops === 'function') {
+			var dropsDiv = document.createElement('div');
+			dropsDiv.setAttribute('tabindex', '0');
+			dropsDiv.style.cssText = 'color:#ddd;padding:4px 0;font-size:12px;';
+			dropsDiv.textContent = Game.GetHowManySantaDrops() + ' of ' + Game.santaDrops.length + " Santa's gifts unlocked.";
+			panel.appendChild(dropsDiv);
+		}
 		// Upgrade button
 		if (level < maxLevel) {
 			var cost = Math.pow(level + 1, level + 1);
@@ -1952,7 +1966,7 @@ Game.registerMod("nvda accessibility", {
 			var n = ach.dname || ach.name;
 			var pool = (isShadow || ach.pool === 'shadow') ? ' [Shadow Achievement]' : '';
 			lbl = n + '. Unlocked.' + pool;
-			desc = MOD.stripHtml(ach.desc || '');
+			desc = MOD.stripHtml(typeof ach.descFunc === 'function' ? ach.descFunc('stats') : (ach.desc || ''));
 		} else {
 			// Locked - hide name and description
 			lbl = '???. Locked.';
@@ -2000,8 +2014,24 @@ Game.registerMod("nvda accessibility", {
 		var MOD = this;
 		// Statistics menu only shows owned upgrades, so just label them
 		var n = upg.dname || upg.name;
-		var desc = MOD.stripHtml(upg.desc || '');
+		var descRaw = '';
+		if (typeof upg.descFunc === 'function') {
+			try { descRaw = upg.descFunc('stats'); } catch(e) { descRaw = upg.desc || ''; }
+		} else {
+			descRaw = upg.desc || '';
+		}
+		if (upg.bought && typeof upg.displayFuncWhenOwned === 'function') {
+			try {
+				var df = upg.displayFuncWhenOwned();
+				if (df) descRaw = df + '<br>' + descRaw;
+			} catch(e) {}
+		}
+		var desc = MOD.stripHtml(descRaw);
 		var lbl = n + '.';
+		if (upg.season) {
+			var dropSum = MOD.getSeasonDropSummary(upg.season);
+			if (dropSum) lbl += ' ' + dropSum + '.';
+		}
 		// Populate the aria-labelledby target label (created by game when screenreader=1)
 		var ariaLabel = l('ariaReader-upgrade-' + upg.id);
 		if (ariaLabel) {
@@ -2344,7 +2374,8 @@ Game.registerMod("nvda accessibility", {
 				// New season started
 				var newName = Game.seasons[currentSeason] ?
 					Game.seasons[currentSeason].name : currentSeason;
-				MOD.announce(newName + ' season has started!');
+				var dropSum = MOD.getSeasonDropSummary(currentSeason);
+				MOD.announce(newName + ' season has started!' + (dropSum ? ' ' + dropSum + '.' : ''));
 			}
 			MOD.lastSeason = currentSeason;
 		}
@@ -4844,37 +4875,71 @@ Game.registerMod("nvda accessibility", {
 	},
 	enhanceUpgradeShop: function() {
 		var MOD = this;
-		// Label all upgrades in store
-		for (var i in Game.UpgradesInStore) {
-			var u = Game.UpgradesInStore[i];
-			if (u) MOD.populateUpgradeLabel(u);
+		// Make the existing #storeTitle serve as the store heading
+		var storeTitle = l('storeTitle');
+		if (storeTitle) {
+			MOD.setAttributeIfChanged(storeTitle, 'role', 'heading');
+			storeTitle.setAttribute('aria-level', '2');
 		}
-		var uc = l('upgrades');
-		if (uc) {
-			// Add Available Upgrades H3 heading (re-added each rebuild)
-			if (!l('a11yUpgradesHeading')) {
-				var upgradesHeading = document.createElement('h3');
-				upgradesHeading.id = 'a11yUpgradesHeading';
-				upgradesHeading.textContent = 'Available Upgrades';
-				upgradesHeading.style.cssText = 'position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;';
-				uc.insertBefore(upgradesHeading, uc.firstChild);
+
+		// 1. Toggle Upgrades (Season biscuits, Golden switch, Veil, Selectors, etc.)
+		var tc = l('toggleUpgrades');
+		if (tc) {
+			var hasToggles = tc.style.display !== 'none' && tc.querySelectorAll('.crate').length > 0;
+			var toggleHeading = l('a11yToggleUpgradesHeading');
+			if (hasToggles) {
+				if (!toggleHeading) {
+					toggleHeading = document.createElement('h3');
+					toggleHeading.id = 'a11yToggleUpgradesHeading';
+					toggleHeading.textContent = 'Special & Season Switches';
+					toggleHeading.style.cssText = 'position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;';
+					tc.insertBefore(toggleHeading, tc.firstChild);
+				}
+				MOD.setAttributeIfChanged(tc, 'role', 'region');
+				tc.setAttribute('aria-label', 'Special and Season Switches');
+			} else if (toggleHeading) {
+				toggleHeading.remove();
 			}
-			// Make the existing #storeTitle serve as the store heading
-			var storeTitle = l('storeTitle');
-			if (storeTitle) {
-				MOD.setAttributeIfChanged(storeTitle, 'role', 'heading');
-				storeTitle.setAttribute('aria-level', '2');
-			}
-			// Remove old separate heading if it exists from a prior version
-			var oldHeading = l('a11yStoreHeading');
-			if (oldHeading) oldHeading.remove();
 		}
-		// Update milk selector crate label (RebuildUpgrades recreates the crate DOM)
-		MOD.updateMilkLabel();
-		// Vault upgrades
+
+		// 2. Tech / Research Upgrades
+		var techC = l('techUpgrades');
+		if (techC) {
+			var hasTech = techC.style.display !== 'none' && techC.querySelectorAll('.crate').length > 0;
+			var techHeading = l('a11yTechUpgradesHeading');
+			if (hasTech) {
+				if (!techHeading) {
+					techHeading = document.createElement('h3');
+					techHeading.id = 'a11yTechUpgradesHeading';
+					techHeading.textContent = 'Research & Tech Upgrades';
+					techHeading.style.cssText = 'position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;';
+					techC.insertBefore(techHeading, techC.firstChild);
+				}
+				MOD.setAttributeIfChanged(techC, 'role', 'region');
+				techC.setAttribute('aria-label', 'Research and Tech Upgrades');
+			} else if (techHeading) {
+				techHeading.remove();
+			}
+		}
+
+		// 3. Vault Upgrades
 		var vc = l('vaultUpgrades');
 		if (vc) {
-			MOD.setAttributeIfChanged(vc, 'role', 'region'); vc.setAttribute('aria-label', 'Vaulted');
+			var hasVault = vc.style.display !== 'none' && vc.querySelectorAll('.crate').length > 0;
+			var vaultHeading = l('a11yVaultUpgradesHeading');
+			if (hasVault) {
+				if (!vaultHeading) {
+					vaultHeading = document.createElement('h3');
+					vaultHeading.id = 'a11yVaultUpgradesHeading';
+					vaultHeading.textContent = 'Vaulted Upgrades';
+					vaultHeading.style.cssText = 'position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;';
+					vc.insertBefore(vaultHeading, vc.firstChild);
+				}
+				MOD.setAttributeIfChanged(vc, 'role', 'region');
+				vc.setAttribute('aria-label', 'Vaulted Upgrades');
+			} else if (vaultHeading) {
+				vaultHeading.remove();
+			}
 			vc.querySelectorAll('.crate.upgrade').forEach(function(c) {
 				var id = c.dataset.id;
 				if (id && Game.UpgradesById[id]) {
@@ -4890,27 +4955,119 @@ Game.registerMod("nvda accessibility", {
 				}
 			});
 		}
-		// Buy All Upgrades button — only exists when player has 'Inspired checklist'
-		var buyAllBtn = l('storeBuyAllButton');
-		if (buyAllBtn && !buyAllBtn.dataset.a11yEnhanced) {
-			buyAllBtn.setAttribute('role', 'button');
-			buyAllBtn.setAttribute('tabindex', '0');
-			buyAllBtn.setAttribute('aria-label', 'Buy all available upgrades');
-			buyAllBtn.addEventListener('keydown', function(e) {
-				if (e.key === 'Enter' || e.key === ' ') {
-					e.preventDefault();
-					buyAllBtn.click();
+
+		// 4. Standard Available Upgrades
+		var uc = l('upgrades');
+		if (uc) {
+			var crates = uc.querySelectorAll('.crate.upgrade');
+			var count = crates.length;
+			var affordableCount = 0;
+			for (var ci = 0; ci < crates.length; ci++) {
+				var crId = crates[ci].dataset.id;
+				if (crId && Game.UpgradesById[crId] && Game.UpgradesById[crId].canBuy()) {
+					affordableCount++;
 				}
-			});
-			buyAllBtn.dataset.a11yEnhanced = 'true';
+			}
+
+			// Add or update Available Upgrades H3 heading
+			var upgradesHeading = l('a11yUpgradesHeading');
+			if (!upgradesHeading) {
+				upgradesHeading = document.createElement('h3');
+				upgradesHeading.id = 'a11yUpgradesHeading';
+				upgradesHeading.style.cssText = 'position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;';
+				uc.insertBefore(upgradesHeading, uc.firstChild);
+			}
+			var headingLabel = 'Available Upgrades' + (count > 0 ? ' (' + count + ' available)' : ' (0 available)');
+			MOD.setTextIfChanged(upgradesHeading, headingLabel);
+			MOD.setAttributeIfChanged(uc, 'role', 'region');
+			uc.setAttribute('aria-label', 'Available Upgrades');
+
+			// Buy All Upgrades button — only exists when player has 'Inspired checklist'
+			var buyAllBtn = l('storeBuyAllButton');
+			if (buyAllBtn) {
+				var buyAllLabel = count === 0 ?
+					'Buy all available upgrades (0 available)' :
+					('Buy all available upgrades (' + affordableCount + ' affordable of ' + count + ')');
+				buyAllBtn.setAttribute('aria-label', buyAllLabel);
+				buyAllBtn.setAttribute('role', 'button');
+				buyAllBtn.setAttribute('tabindex', '0');
+				if (!buyAllBtn.dataset.a11yEnhanced) {
+					buyAllBtn.dataset.a11yEnhanced = 'true';
+					buyAllBtn.addEventListener('keydown', function(e) {
+						if (e.key === 'Enter' || e.key === ' ') {
+							e.preventDefault();
+							buyAllBtn.click();
+						}
+					});
+				}
+			}
+
+			// Informative note when no standard upgrades are present
+			var noUpgNote = l('a11yNoUpgradesNote');
+			if (count === 0) {
+				if (!noUpgNote) {
+					noUpgNote = document.createElement('div');
+					noUpgNote.id = 'a11yNoUpgradesNote';
+					noUpgNote.setAttribute('tabindex', '0');
+					noUpgNote.style.cssText = 'display:block;padding:6px;margin:4px 0;font-size:12px;color:#aaa;background:#1a1a1a;border:1px solid #444;';
+					var storeBuyAll = l('storeBuyAll');
+					if (storeBuyAll && storeBuyAll.nextSibling) {
+						uc.insertBefore(noUpgNote, storeBuyAll.nextSibling);
+					} else {
+						uc.appendChild(noUpgNote);
+					}
+				}
+				MOD.setTextIfChanged(noUpgNote, 'No standard upgrades available to purchase. All standard upgrades are bought. Check Special & Season Switches above for toggles and seasonal switches.');
+			} else if (noUpgNote) {
+				noUpgNote.remove();
+			}
 		}
+
+		// Label all upgrades in store
+		for (var i in Game.UpgradesInStore) {
+			var u = Game.UpgradesInStore[i];
+			if (u) MOD.populateUpgradeLabel(u);
+		}
+
+		// Update milk selector crate label (RebuildUpgrades recreates the crate DOM)
+		MOD.updateMilkLabel();
+	},
+	getSeasonDropSummary: function(season) {
+		if (!season) return '';
+		try {
+			if (season === 'valentines') {
+				var count = (typeof Game.GetHowManyHeartDrops === 'function') ? Game.GetHowManyHeartDrops() : 0;
+				var total = Game.heartDrops ? Game.heartDrops.length : 7;
+				return count + '/' + total + ' heart biscuits unlocked';
+			} else if (season === 'christmas') {
+				var santa = (typeof Game.GetHowManySantaDrops === 'function') ? Game.GetHowManySantaDrops() : 0;
+				var santaTotal = Game.santaDrops ? Game.santaDrops.length : 14;
+				var rein = (typeof Game.GetHowManyReindeerDrops === 'function') ? Game.GetHowManyReindeerDrops() : 0;
+				var reinTotal = Game.reindeerDrops ? Game.reindeerDrops.length : 7;
+				return santa + '/' + santaTotal + " Santa's gifts, " + rein + '/' + reinTotal + ' reindeer cookies unlocked';
+			} else if (season === 'easter') {
+				var eggs = (typeof Game.GetHowManyEggs === 'function') ? Game.GetHowManyEggs() : 0;
+				var eggTotal = Game.easterEggs ? Game.easterEggs.length : 20;
+				return eggs + '/' + eggTotal + ' eggs unlocked';
+			} else if (season === 'halloween') {
+				var hall = (typeof Game.GetHowManyHalloweenDrops === 'function') ? Game.GetHowManyHalloweenDrops() : 0;
+				var hallTotal = Game.halloweenDrops ? Game.halloweenDrops.length : 7;
+				return hall + '/' + hallTotal + ' halloween cookies unlocked';
+			}
+		} catch(e) {}
+		return '';
 	},
 	stripHtml: function(h) {
 		if (!h) return '';
-		// Decode HTML entities using textarea
-		var txt = document.createElement('textarea');
-		txt.innerHTML = h;
-		var decoded = txt.value;
+		var decoded = '';
+		try {
+			var txt = document.createElement('textarea');
+			txt.innerHTML = h;
+			decoded = txt.value || txt.textContent || '';
+		} catch(e) {
+			decoded = '' + h;
+		}
+		if (!decoded) decoded = '' + h;
 		// Replace bullet with dash for readability
 		decoded = decoded.replace(/•/g, ' - ');
 		// Strip any remaining HTML tags and normalize whitespace
@@ -5069,11 +5226,38 @@ Game.registerMod("nvda accessibility", {
 		var t = n + '. ';
 		if (u.bought) {
 			t += 'Purchased.';
+			if (typeof u.displayFuncWhenOwned === 'function') {
+				try {
+					var df = MOD.stripHtml(u.displayFuncWhenOwned());
+					if (df) t += ' ' + df + '.';
+				} catch(e) {}
+			}
 		} else {
 			var price = Math.round(u.getPrice());
 			t += 'Cost: ' + Beautify(price) + '.';
 			t += Game.cookies >= price ? ' Affordable.' : ' Cannot afford.';
 		}
+
+		// Season switch biscuit enhancements
+		if (u.season) {
+			var seasonObj = Game.seasons[u.season];
+			var seasonName = seasonObj ? seasonObj.name : u.season;
+			var isActiveSeason = (Game.season === u.season);
+			if (isActiveSeason) {
+				var timeRem = (Game.seasonT > 0 && Game.fps && typeof Game.sayTime === 'function') ? ' (' + Game.sayTime(Game.seasonT + Game.fps, -1) + ' remaining)' : '';
+				t += ' (Active season: ' + seasonName + timeRem + '. Click to cancel season).';
+			} else {
+				t += ' (Triggers ' + seasonName + ' season).';
+			}
+			var dropSummary = MOD.getSeasonDropSummary(u.season);
+			if (dropSummary) {
+				t += ' ' + dropSummary + '.';
+			}
+		} else if (u.pool === 'toggle') {
+			var effect = MOD.getToggleUpgradeEffect(u);
+			if (effect) t += ' ' + effect;
+		}
+
 		// Find the button across upgrade containers and set aria-label directly
 		var containers = [l('upgrades'), l('toggleUpgrades'), l('techUpgrades'), l('vaultUpgrades')];
 		for (var ci = 0; ci < containers.length; ci++) {
@@ -5111,11 +5295,11 @@ Game.registerMod("nvda accessibility", {
 	ensureUpgradeInfoText: function(u) {
 		var MOD = this;
 		if (!u) return;
-		// Skip bought non-toggle upgrades (toggle upgrades like Elder Pledge can be re-activated)
-		if (u.bought && u.pool !== 'toggle') return;
-		// Find the upgrade crate element
+		// Skip bought non-toggle upgrades unless they have displayFuncWhenOwned (e.g. Elder Pledge)
+		if (u.bought && u.pool !== 'toggle' && !u.displayFuncWhenOwned) return;
+		// Find the upgrade crate element across all four containers
 		var crate = null;
-		var containers = [l('upgrades'), l('techUpgrades'), l('toggleUpgrades')];
+		var containers = [l('upgrades'), l('toggleUpgrades'), l('techUpgrades'), l('vaultUpgrades')];
 		for (var ci = 0; ci < containers.length; ci++) {
 			if (!containers[ci]) continue;
 			crate = containers[ci].querySelector('[data-id="' + u.id + '"]');
@@ -5127,7 +5311,32 @@ Game.registerMod("nvda accessibility", {
 		var existingText = l(textId);
 		// Build the info text - cost is already in the button aria-label
 		var infoText = '';
-		var desc = MOD.stripHtml(u.desc || '');
+		var descRaw = '';
+		if (typeof u.descFunc === 'function') {
+			try {
+				descRaw = u.descFunc('store');
+			} catch(e) {
+				descRaw = u.desc || '';
+			}
+		} else {
+			descRaw = u.desc || '';
+		}
+		if (u.bought && typeof u.displayFuncWhenOwned === 'function') {
+			try {
+				var df = u.displayFuncWhenOwned();
+				if (df) descRaw = df + '<br>' + descRaw;
+			} catch(e) {}
+		}
+		var desc = MOD.stripHtml(descRaw);
+
+		// If this is a toggle upgrade, append its toggle effect if not already included
+		if (u.pool === 'toggle') {
+			var toggleEffect = MOD.getToggleUpgradeEffect(u);
+			if (toggleEffect && !desc.includes(toggleEffect)) {
+				desc = (desc ? desc + ' ' : '') + toggleEffect;
+			}
+		}
+
 		if (u.canBuy()) {
 			infoText = desc;
 		} else {
@@ -5139,7 +5348,7 @@ Game.registerMod("nvda accessibility", {
 			}
 		}
 		if (existingText) {
-			existingText.textContent = infoText;
+			MOD.setTextIfChanged(existingText, infoText);
 			existingText.removeAttribute('aria-label');
 			existingText.removeAttribute('role');
 		} else {
@@ -5383,14 +5592,42 @@ Game.registerMod("nvda accessibility", {
 		if (name === 'background selector') {
 			return 'Opens a menu to choose the game background. Cosmetic only.';
 		}
-		if (name === 'golden switch') {
+		if (name.includes('sound selector')) {
+			return 'Opens a menu to choose the golden cookie chime sound.';
+		}
+		if (name === 'golden switch [off]') {
+			return 'Toggle: Turn ON to gain +50% CpS while Golden Cookies stop spawning.';
+		}
+		if (name === 'golden switch [on]') {
+			return 'Toggle: Turn OFF to resume Golden Cookies spawning and remove +50% CpS.';
+		}
+		if (name.includes('golden switch')) {
 			return 'Toggle: When ON, Golden Cookies stop spawning but you gain 50% more CpS. Turn OFF to resume Golden Cookies.';
 		}
-		if (name === 'shimmering veil') {
+		if (name === 'shimmering veil [off]') {
+			return 'Toggle: Turn ON to gain +50% CpS. Golden Cookies and clicks can break the veil.';
+		}
+		if (name === 'shimmering veil [on]') {
+			return 'Toggle: Currently active (+50% CpS). Clicking the veil turns it off.';
+		}
+		if (name.includes('shimmering veil')) {
 			return 'Toggle: When active, buildings produce 50% more but Golden Cookies break the veil. Heavenly upgrade required.';
 		}
-		if (name.includes('season')) {
-			return 'Switches the current season. Each season has unique upgrades and cookies.';
+		if (name === 'sugar frenzy') {
+			return 'Triples CpS for 1 hour. Costs 1 sugar lump. Can only be used once per ascension.';
+		}
+		if (name === 'jukebox') {
+			return 'Opens the music player menu to select and play music tracks.';
+		}
+		if (u.season) {
+			var sObj = Game.seasons[u.season];
+			var sName = sObj ? sObj.name : u.season;
+			var switchUses = (typeof Game.saySeasonSwitchUses === 'function') ? Game.saySeasonSwitchUses() : '';
+			var dropInfo = MOD.getSeasonDropSummary(u.season);
+			var res = 'Triggers ' + sName + ' season for 24 hours.';
+			if (dropInfo) res += ' ' + dropInfo + '.';
+			if (switchUses) res += ' ' + switchUses;
+			return res;
 		}
 		// Default: use the upgrade's description
 		return MOD.stripHtml(u.desc || '');
@@ -5834,13 +6071,19 @@ Game.registerMod("nvda accessibility", {
 		// Split description into effect and flavor text (flavor is inside <q> tags)
 		var effect = '';
 		var flavor = '';
-		if (u.desc) {
-			var qMatch = u.desc.match(/<q>([\s\S]*?)<\/q>/);
+		var descRaw = '';
+		if (typeof u.descFunc === 'function') {
+			try { descRaw = u.descFunc('ascend'); } catch(e) { descRaw = u.desc || ''; }
+		} else {
+			descRaw = u.desc || '';
+		}
+		if (descRaw) {
+			var qMatch = descRaw.match(/<q>([\s\S]*?)<\/q>/);
 			if (qMatch) {
-				effect = MOD.stripHtml(u.desc.replace(/<q>[\s\S]*?<\/q>/, ''));
+				effect = MOD.stripHtml(descRaw.replace(/<q>[\s\S]*?<\/q>/, ''));
 				flavor = MOD.stripHtml(qMatch[1]);
 			} else {
-				effect = MOD.stripHtml(u.desc);
+				effect = MOD.stripHtml(descRaw);
 			}
 		}
 		var cr = l('heavenlyUpgrade' + u.id);
@@ -6978,7 +7221,19 @@ Game.registerMod("nvda accessibility", {
 		}
 		// Active season
 		if (Game.season !== '' && Game.seasons[Game.season]) {
-			items.push({key: 'season', text: 'Season: ' + Game.seasons[Game.season].name});
+			var seasonText = 'Season: ' + Game.seasons[Game.season].name;
+			var seasonDetails = [];
+			if (Game.seasonT > 0) {
+				seasonDetails.push(Game.sayTime(Game.seasonT + Game.fps, -1) + ' remaining');
+			}
+			var dropInfo = MOD.getSeasonDropSummary(Game.season);
+			if (dropInfo) {
+				seasonDetails.push(dropInfo);
+			}
+			if (seasonDetails.length > 0) {
+				seasonText += ' (' + seasonDetails.join(', ') + ')';
+			}
+			items.push({key: 'season', text: seasonText});
 		}
 		// Grandmapocalypse
 		if (Game.elderWrath > 0) {
