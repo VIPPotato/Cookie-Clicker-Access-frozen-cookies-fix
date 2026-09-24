@@ -61,8 +61,9 @@ Use either the Workshop copy or the manual copy, not both.
 1. Install the [Tampermonkey](https://www.tampermonkey.net/) extension for Chrome, Firefox, Edge or
    Safari.
 2. Open
-   [cookie-clicker-accessibility.user.js](https://raw.githubusercontent.com/VIPPotato/Cookie-Clicker-Access-frozen-cookies-fix/main/cookie-clicker-accessibility.user.js).
-   Tampermonkey opens an install tab. Confirm with Install.
+   [cookie-clicker-accessibility.user.js](https://github.com/VIPPotato/Cookie-Clicker-Access-frozen-cookies-fix/releases/latest/download/cookie-clicker-accessibility.user.js).
+   Tampermonkey opens an install tab. Confirm with Install. The link always serves the script from
+   the newest release.
 3. Open [Cookie Clicker](https://orteil.dashnet.org/cookieclicker/). The script waits for the game to
    finish loading, then registers itself.
 
