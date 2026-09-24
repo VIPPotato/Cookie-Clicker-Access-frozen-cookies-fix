@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Cookie Clicker Access (Web)
 // @namespace    https://github.com/VIPPotato/Cookie-Clicker-Access-frozen-cookies-fix
-// @version      1.3.10
-// @description  Adapts the Steam accessibility mod for the web version of Cookie Clicker. Self-contained bundle with all modules.
+// @version      1.4.0
+// @description  Screen reader accessibility for the web version of Cookie Clicker. Self-contained bundle with all modules.
 // @author       Claude (Original Mod), Guillem (Tampermonkey Adapter)
 // @match        https://orteil.dashnet.org/cookieclicker/
 // @run-at       document-idle

@@ -1,11 +1,11 @@
 {
-	"Name": "NVDA Accessibility Enhancements",
-	"ID": "nvda accessibility",
-	"Author": "Claude",
-	"Description": "Enhances accessibility for NVDA and other screen readers. Fully accessible Garden, Pantheon, Grimoire, buildings with levels, wrinklers, and more.",
-	"ModVersion": 13.10,
+	"Name": "Screen Reader Accessibility Enhancements",
+	"ID": "screen reader accessibility",
+	"Author": "VIPPotato",
+	"Description": "Makes Cookie Clicker playable with a screen reader such as NVDA, JAWS or VoiceOver. Adds ARIA labels, keyboard navigation, heading structure and spoken announcements. Fully accessible Garden, Pantheon, Grimoire, Stock Market, Dragon, Santa, buildings with levels, wrinklers, and more.",
+	"ModVersion": 14.0,
 	"GameVersion": 2.053,
-	"Date": "18/09/2026",
+	"Date": "24/09/2026",
 	"Dependencies": [],
 	"Disabled": 0,
 	"AllowSteamAchievs": 1

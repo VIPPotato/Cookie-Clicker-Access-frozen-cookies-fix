@@ -1,5 +1,61 @@
 # Cookie Clicker Access - Changelog
 
+## Version 14.0
+
+### Renamed for all screen readers
+- The mod is now called **Screen Reader Accessibility Enhancements**, replacing "NVDA Accessibility Enhancements". The mod has always supported JAWS, Narrator and VoiceOver as well as NVDA, and the old name misrepresented that
+- The internal mod ID changed from `nvda accessibility` to `screen reader accessibility`. Any mod that referenced the old ID through `Game.mods['nvda accessibility']` must be updated
+- The startup announcement now says "Screen Reader Accessibility mod version 14.0 loaded."
+
+### Stats Menu Structure
+- Added a heading outline to the Stats menu: `H2` on each section banner, `H3` on subsection titles, and `H4` before each crate box, so the menu can be navigated with single-key heading jumps
+- Each crate box is now a labelled group announcing its name and item count (for example `Achievements, 316 items`), with the name derived from the crates it actually contains
+- Section titles only become headings when they head a subsection, so inline values such as `Prestige level: N` are no longer read as headers
+
+### Milk Readout
+- The milk flavour in the stats readout now follows the Milk selector instead of always reporting the achievement rank flavour, matching what the game draws and what the big cookie label says
+- During a Born again ascension the readout falls back to the rank flavour, because the game ignores the selector in that state
+- Rank and percentage remain achievement-based
+
+### Pantheon
+- Spirit placement is now verified before it is announced: the slot is read back after the attempt, so a failed placement no longer reports success and no longer spends a worship swap
+- Added an "already in that slot" response, which previously reported a spirit's own slot as occupied
+- A failure inside the game's placement call is now reported instead of being silently swallowed
+
+### Permanent Upgrade Slots
+- The permanent slot picker now announces how many upgrades are on offer and moves focus to the first crate when it opens
+- Re-labelling after a selection no longer pulls focus back to the top of the list
+
+### Dragon Aura Prompt
+- Added a safety net that labels the game's native dragon aura prompt if another mod or game path opens it, since its crates are otherwise unlabelled with no keyboard access
+- Choosing an aura in that prompt rebuilds it from scratch, so the crates are now relabelled on every refresh; previously the prompt went mute and lost keyboard access after the first selection
+- After a selection, focus returns to the chosen aura and the pending choice is announced, with a reminder that Confirm still has to be activated to apply it
+- Each crate now states whether it is the aura currently equipped in that slot or the one selected but not yet applied
+- Aura names are read from the game's localized names, so a translated game is no longer described in English
+- The mod's own inline aura picker in the dragon panel is unchanged and still the normal route
+
+### Challenge Mode Prompt
+- The challenge mode picker shown when starting an ascension now labels each mode crate with its name, whether it is currently selected, and what the mode changes
+- Picking a mode rebuilds the prompt, so the crates are relabelled on every refresh; previously the prompt went silent and lost keyboard access after the first pick
+- Mode names are read from the game's localized names
+- Removed a duplicate handler that was overwriting these labels shortly after the prompt opened, which had dropped every mode description
+
+### Prompt Focus
+- Choosing an option in any prompt now leaves focus on the option you picked; a dialog-heading focus pass was overriding it a moment later in the dragon aura, permanent slot, and challenge mode pickers
+- Prompts that have no specialized handling still move focus to their heading as before
+
+### Announcements
+- Non-urgent announcements are suppressed while a modal dialog is open, so background chatter no longer talks over a prompt
+- Urgent announcements (shimmers, wrinklers, veil breaks, achievements) are never suppressed
+- Dialogs keep their own speech, including the save confirmation, slot selection feedback, and the aura and upgrade counts
+
+### Documentation
+- The mod is published on the Steam Workshop, and the README now points there as the install route: https://steamcommunity.com/sharedfiles/filedetails/?id=3807399658
+- The README explains that an older copy of the accessibility mod has to be removed first. Because the mod ID changed, the game treats the old copy as a separate mod, loads both, and reads every label twice
+- The README carries a section listing what this fork changes against the upstream repository it was forked from, and a compatibility list covering Frozen Cookies, Cookie Garden Helper Reloaded, CCSE and Cookie Assistant
+- Added instructions for running the test harness with `node tests/harness.js`
+- `info.txt` author updated to VIPPotato
+
 ## Version 13.10
 
 ### Store & Upgrade Navigation

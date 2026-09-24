@@ -1,4 +1,4 @@
-Game.registerMod("nvda accessibility", {
+Game.registerMod("screen reader accessibility", {
 	init: function() {
 		var MOD = this;
 		this.createLiveRegion();
@@ -97,7 +97,9 @@ Game.registerMod("nvda accessibility", {
 		// Announce when Ctrl+S saves the game
 		document.addEventListener('keydown', function(e) {
 			if (e.ctrlKey && e.key === 's') {
-				MOD.announce('Game saved.');
+				// Forced: a direct user action, so it must be heard even if a
+				// prompt happens to be open.
+				MOD.announce('Game saved.', true);
 			}
 		});
 		// Escape closes open panels (menus, minigames, dragon, santa, milk selector)
@@ -130,7 +132,7 @@ Game.registerMod("nvda accessibility", {
 							}
 						}
 					}, 100);
-					Game.mods['nvda accessibility'].announce(menuName + ' menu closed.');
+					Game.mods['screen reader accessibility'].announce(menuName + ' menu closed.');
 					e.preventDefault();
 					return;
 				}
@@ -142,7 +144,7 @@ Game.registerMod("nvda accessibility", {
 					if (bld && bld.onMinigame) {
 						var mgName = bld.minigameName || bld.name;
 						bld.switchMinigame(false);
-						Game.mods['nvda accessibility'].announce(mgName + ' closed');
+						Game.mods['screen reader accessibility'].announce(mgName + ' closed');
 						var mgBtn = l('productMinigameButton' + bld.id);
 						if (mgBtn) mgBtn.focus();
 						e.preventDefault();
@@ -161,9 +163,9 @@ Game.registerMod("nvda accessibility", {
 						sPanel.remove();
 						Game.choiceSelectorOn = -1;
 						PlaySound('snd/tickOff.mp3');
-						var sCrate = Game.mods['nvda accessibility'].findSelectorCrate(selectorPanels[sp].upgName);
+						var sCrate = Game.mods['screen reader accessibility'].findSelectorCrate(selectorPanels[sp].upgName);
 						if (sCrate) sCrate.focus();
-						Game.mods['nvda accessibility'].announce(selectorPanels[sp].label);
+						Game.mods['screen reader accessibility'].announce(selectorPanels[sp].label);
 						e.preventDefault();
 						return;
 					}
@@ -173,7 +175,7 @@ Game.registerMod("nvda accessibility", {
 				var dragonPanel = l('a11yDragonPanel');
 				if (dragonPanel) {
 					Game.ToggleSpecialMenu(0);
-					Game.mods['nvda accessibility'].announce('Krumblor the Dragon closed');
+					Game.mods['screen reader accessibility'].announce('Krumblor the Dragon closed');
 					var dragonBtn = l('a11ySpecialTab_dragon');
 					if (dragonBtn) dragonBtn.focus();
 					e.preventDefault();
@@ -183,7 +185,7 @@ Game.registerMod("nvda accessibility", {
 				var santaPanel = l('a11ySantaPanel');
 				if (santaPanel) {
 					Game.ToggleSpecialMenu(0);
-					Game.mods['nvda accessibility'].announce("Santa's Progress closed");
+					Game.mods['screen reader accessibility'].announce("Santa's Progress closed");
 					var santaBtn = l('a11ySpecialTab_santa');
 					if (santaBtn) santaBtn.focus();
 					e.preventDefault();
@@ -227,6 +229,10 @@ Game.registerMod("nvda accessibility", {
 		// Wrap Game.Prompt to make prompts accessible to screen readers
 		var origPrompt = Game.Prompt;
 		Game.Prompt = function(content, options, updateFunc, style) {
+			// A new prompt build invalidates any earlier focus claim. Reset
+			// synchronously, before the game rebuilds the DOM, so a specialized
+			// labeller running after origPrompt can claim this build.
+			MOD.promptFocusClaimed = false;
 			origPrompt.apply(this, arguments);
 			// Enhance the prompt for screen readers after the DOM is built
 			setTimeout(function() {
@@ -264,14 +270,8 @@ Game.registerMod("nvda accessibility", {
 					var giftError = l('giftError');
 					if (giftError) giftError.setAttribute('aria-live', 'polite');
 				}
-				// Focus the heading if present, otherwise first option
-				var heading = promptContent ? promptContent.querySelector('h3') : null;
-				if (heading) {
-					heading.setAttribute('tabindex', '-1');
-					heading.focus();
-				} else if (optionLinks.length > 0) {
-					optionLinks[0].focus();
-				}
+				// Focus the heading if present, otherwise first option.
+				MOD.focusPromptDefault(promptContent, optionLinks);
 			}, 100);
 		};
 		// Notification system: categorize into startup / user-initiated / non-user-initiated
@@ -572,12 +572,10 @@ Game.registerMod("nvda accessibility", {
 				MOD.enhanceSantaUI();
 			}, 50);
 		};
-		// Wrap Game.PickAscensionMode to label challenge mode crates in the prompt
-		var origPickAscensionMode = Game.PickAscensionMode;
-		Game.PickAscensionMode = function() {
-			origPickAscensionMode.apply(this, arguments);
-			setTimeout(function() { MOD.labelChallengeModeSelector(); }, 50);
-		};
+		// Game.PickAscensionMode is wrapped once, in wrapPermanentSlotFunctions,
+		// which also owns labelChallengeModePrompt. A second wrapper here used to
+		// call labelChallengeModeSelector 50 ms later and overwrite those labels,
+		// dropping the description and the refresh handling.
 		// Wrap Game.BuildAscendTree to re-label heavenly upgrades after tree rebuild
 		var origBuildAscendTree = Game.BuildAscendTree;
 		Game.BuildAscendTree = function(justBought) {
@@ -686,8 +684,8 @@ Game.registerMod("nvda accessibility", {
 				MOD.filterUnownedBuildings();
 			}, 100);
 		});
-		Game.Notify('Accessibility Enhanced', 'Version 13.10', [10, 0], 6);
-		this.announce('NVDA Accessibility mod version 13.10 loaded.');
+		Game.Notify('Accessibility Enhanced', 'Version 14.0', [10, 0], 6);
+		this.announce('Screen Reader Accessibility mod version 14.0 loaded.');
 	},
 	overrideDrawBuildings: function() {
 		var MOD = this;
@@ -851,8 +849,28 @@ Game.registerMod("nvda accessibility", {
 			}, readTime);
 		}, 50);
 	},
-	announce: function(t) {
-		// Polite: add to end of queue
+	modalPanelOpen: function() {
+		// True while a genuinely modal surface owns the screen: the game's own
+		// prompt (which darkens the page and takes focus) or our permanent-slot
+		// picker dialog (role="dialog" aria-modal="true"). The inline aura and
+		// Grimoire pickers are not modal, they live inside their panels, so
+		// background speech there is not a conflict.
+		try {
+			if (Game.promptOn) return true;
+			if (l('a11yUpgradeDialog')) return true;
+		} catch(e) {}
+		return false;
+	},
+	announce: function(t, force) {
+		// Polite: add to end of queue.
+		// While a modal is open, drop background chatter rather than queueing it.
+		// The draw loop generates these every few seconds (season changes, buffs
+		// ending, lumps ripening) and they talk over the dialog the user is
+		// reading. Deferring instead of dropping would empty a burst of stale
+		// speech the moment the dialog closes, which is worse. Pass force = true
+		// for a dialog's own announcements, which must always be heard.
+		// Urgent announcements are never suppressed: see announceUrgent.
+		if (!force && this.modalPanelOpen()) return;
 		this._announceQueue.push(t);
 		this._processQueue();
 	},
@@ -1750,6 +1768,71 @@ Game.registerMod("nvda accessibility", {
 			titles[i].setAttribute('aria-level', '3');
 		}
 	},
+	// Give the stats menu a real heading outline so NVDA's H key can jump between
+	// categories instead of arrowing through 600+ crates. Three levels:
+	//   2 = the game's own .section banner ("Statistics")
+	//   3 = .subsection > .title ("General", "Prestige", "Upgrades", "Achievements")
+	//       — applied by enhanceMenuHeadings, deliberately NOT the bare .title
+	//       selector: the game also uses class="title" for the inline "Prestige
+	//       level: N" value inside a .listing, which is data, not a section.
+	//   4 = one synthetic heading per .listing.crateBox, naming the box and its
+	//       item count, plus role="group" on the box itself.
+	// Box names come from the pool of the first crate's real game object rather
+	// than a blanket "Unlocked upgrades"/"Achievements": the game emits one box
+	// per pool (debug, prestige, normal, cookie / normal, shadow, dungeon), so
+	// pool lookup distinguishes the four upgrade boxes from each other and names
+	// the shadow box correctly instead of reporting it as "Achievements, 0 items".
+	addStatsHeadings: function() {
+		var menu = l('menu');
+		if (!menu || Game.onMenu !== 'stats') return;
+		var sections = menu.querySelectorAll('.section:not([role])');
+		for (var s = 0; s < sections.length; s++) {
+			sections[s].setAttribute('role', 'heading');
+			sections[s].setAttribute('aria-level', '2');
+		}
+		var upgradePoolNames = {
+			prestige: 'Prestige upgrades',
+			debug: 'Debug upgrades',
+			cookie: 'Cookie upgrades'
+		};
+		var achievPoolNames = {
+			shadow: 'Shadow achievements',
+			dungeon: 'Dungeon achievements'
+		};
+		var boxes = menu.querySelectorAll('.listing.crateBox:not([data-a11y-group])');
+		for (var b = 0; b < boxes.length; b++) {
+			var box = boxes[b];
+			box.setAttribute('data-a11y-group', '1');
+			var crates = box.querySelectorAll('.crate');
+			if (!crates.length) continue;
+			var first = crates[0];
+			var isAch = first.classList.contains('achievement');
+			var firstId = first.getAttribute('data-id');
+			var pool = '';
+			try {
+				var obj = isAch ? (Game.AchievementsById && Game.AchievementsById[firstId])
+				                : (Game.UpgradesById && Game.UpgradesById[firstId]);
+				if (obj && obj.pool) pool = obj.pool;
+			} catch(e) {}
+			var label;
+			if (isAch) {
+				label = achievPoolNames[pool] || 'Achievements';
+				// Fall back to the crate class when the lookup fails, so a shadow
+				// box is never announced as plain "Achievements".
+				if (!achievPoolNames[pool] && first.classList.contains('shadow')) label = 'Shadow achievements';
+			} else {
+				label = upgradePoolNames[pool] || 'Unlocked upgrades';
+			}
+			box.setAttribute('role', 'group');
+			box.setAttribute('aria-label', label);
+			var h = document.createElement('div');
+			h.setAttribute('role', 'heading');
+			h.setAttribute('aria-level', '4');
+			h.style.cssText = 'font-weight:bold;margin:6px 0 2px 0;width:100%;';
+			h.textContent = label + ', ' + crates.length + ' items';
+			box.parentNode.insertBefore(h, box);
+		}
+	},
 	enhanceStatsMenu: function() {
 		var MOD = this, menu = l('menu');
 		if (!menu) return;
@@ -1762,6 +1845,7 @@ Game.registerMod("nvda accessibility", {
 		MOD.enhanceMenuHeadings(menu);
 		// Defer all other work to avoid blocking the initial render
 		setTimeout(function() {
+			MOD.addStatsHeadings();
 			MOD.enhanceStatsStructure();
 			MOD.labelStatisticsContent();
 		}, 50);
@@ -3128,9 +3212,9 @@ Game.registerMod("nvda accessibility", {
 							}
 							origHarvestAll.call(g, type, mature, mortal);
 							if (snapshot.length > 0) {
-								Game.mods['nvda accessibility'].gardenAnnounce('Harvested ' + snapshot.length + ' plant' + (snapshot.length !== 1 ? 's' : '') + ': ' + snapshot.join(', '));
+								Game.mods['screen reader accessibility'].gardenAnnounce('Harvested ' + snapshot.length + ' plant' + (snapshot.length !== 1 ? 's' : '') + ': ' + snapshot.join(', '));
 							} else {
-								Game.mods['nvda accessibility'].gardenAnnounce('No plants to harvest');
+								Game.mods['screen reader accessibility'].gardenAnnounce('No plants to harvest');
 							}
 						};
 					}
@@ -3151,7 +3235,7 @@ Game.registerMod("nvda accessibility", {
 							if (e.key === 'Enter' || e.key === ' ') {
 								e.preventDefault();
 								if (isInfo) {
-									Game.mods['nvda accessibility'].showGardenInfoAccessible();
+									Game.mods['screen reader accessibility'].showGardenInfoAccessible();
 								} else {
 									el.click();
 								}
@@ -3181,7 +3265,7 @@ Game.registerMod("nvda accessibility", {
 							if (e.key === 'Enter' || e.key === ' ') {
 								e.preventDefault();
 								if (isInfo) {
-									Game.mods['nvda accessibility'].showGardenInfoAccessible();
+									Game.mods['screen reader accessibility'].showGardenInfoAccessible();
 								} else {
 									el.click();
 								}
@@ -3206,11 +3290,11 @@ Game.registerMod("nvda accessibility", {
 				if (e.key === 'Enter' || e.key === ' ') {
 					e.preventDefault();
 					e.stopPropagation();
-					Game.mods['nvda accessibility'].toggleGardenInfoPanel();
+					Game.mods['screen reader accessibility'].toggleGardenInfoPanel();
 				}
 			});
 			infoBtn.addEventListener('click', function(e) {
-				Game.mods['nvda accessibility'].toggleGardenInfoPanel();
+				Game.mods['screen reader accessibility'].toggleGardenInfoPanel();
 			});
 		}
 
@@ -4181,19 +4265,40 @@ Game.registerMod("nvda accessibility", {
 					if (!pan) return;
 					var currentGod = pan.godsById[godId];
 					if (!currentGod) return;
-					// Slot occupied — must remove that god first (covers self-slotting too)
+					// Already in this slot — say so plainly. Must come before the
+					// occupied check below, which would otherwise report the
+					// spirit's own slot as "occupied".
+					if (pan.slot[slotIndex] === currentGod.id) {
+						MOD.announce(godName + ' is already in the ' + slotName + ' slot');
+						return;
+					}
+					// Slot occupied — must remove that god first
 					if (pan.slot[slotIndex] !== -1) {
 						MOD.announce('Slot already occupied');
 						return;
 					}
+					// The swap limit is real: minigamePantheon.js dropGod() refuses
+					// the drag and spends a swap via useSwap(1) on every accepted
+					// placement. slotGod() alone spends nothing, so calling it
+					// without useSwap would hand out unlimited free swaps.
 					if (pan.swaps <= 0) {
 						MOD.announce('Cannot place ' + godName + '. No worship swaps available.');
 						return;
 					}
-					pan.slotGod(currentGod, slotIndex);
-					pan.useSwap(1);
-					MOD.announce(godName + ' placed in ' + slotName + ' slot');
-					MOD.enhancePantheonMinigame();
+					try {
+						pan.slotGod(currentGod, slotIndex);
+						// Announce the real outcome by reading the slot back rather
+						// than assuming slotGod took effect.
+						if (pan.slot[slotIndex] === currentGod.id) {
+							pan.useSwap(1);
+							MOD.announce(godName + ' placed in ' + slotName + ' slot');
+						} else {
+							MOD.announce('Could not place ' + godName + ' in the ' + slotName + ' slot');
+						}
+						MOD.enhancePantheonMinigame();
+					} catch(err) {
+						MOD.announce('Error placing ' + godName);
+					}
 				});
 				container.appendChild(btn);
 			})(i, slots[i]);
@@ -5648,11 +5753,12 @@ Game.registerMod("nvda accessibility", {
 			var origPut = Game.PutUpgradeInPermanentSlot;
 			Game.PutUpgradeInPermanentSlot = function(upgrade, slot) {
 				origPut.apply(this, arguments);
-				// Announce the selected upgrade
+				// Announce the selected upgrade. Forced: this fires from inside the
+				// game's own prompt, which announce() otherwise suppresses.
 				var upg = Game.UpgradesById[upgrade];
 				if (upg) {
 					var name = upg.dname || upg.name;
-					MOD.announce('Selected: ' + name);
+					MOD.announce('Selected: ' + name, true);
 				}
 				// Relabel the selected upgrade display
 				setTimeout(function() { MOD.labelPermanentUpgradePromptSelected(); }, 50);
@@ -5662,8 +5768,17 @@ Game.registerMod("nvda accessibility", {
 		if (Game.PickAscensionMode) {
 			var origPick = Game.PickAscensionMode;
 			Game.PickAscensionMode = function() {
+				// The game re-enters this function on every crate click
+				// (src/main.js:4036), rebuilding the whole prompt. Read
+				// Game.promptOn before origPick runs to tell a first open from
+				// a rebuild: Game.Prompt sets it to 1 (src/main.js:6338) and
+				// ClosePrompt clears it (src/main.js:6349). A dataset flag
+				// cannot work here, because the prompt div itself is recreated.
+				var wasOpen = !!Game.promptOn;
 				origPick.apply(this, arguments);
-				setTimeout(function() { MOD.labelChallengeModePrompt(); }, 50);
+				setTimeout(function() {
+					MOD.labelChallengeModePrompt(wasOpen ? 'refresh' : 'open');
+				}, 50);
 			};
 		}
 		// Wrap Game.UpdateAscensionModePrompt to re-label the button after it rebuilds
@@ -5674,6 +5789,97 @@ Game.registerMod("nvda accessibility", {
 				setTimeout(function() { MOD.labelAscendModeButton(); }, 50);
 			};
 		}
+		// Safety net for the game's own dragon aura prompt. We normally bypass it
+		// with the inline picker in the dragon panel (createAuraSlotUI), which is
+		// richer. But another mod, or a future game path, can still open the
+		// native prompt, and its crates are unlabelled sprite divs with no role
+		// and no tab stop. Label them if that happens.
+		if (typeof Game.SelectDragonAura === 'function' && !Game.SelectDragonAura._a11yWrapped) {
+			var origSelectAura = Game.SelectDragonAura;
+			Game.SelectDragonAura = function(slot, update) {
+				var result = origSelectAura.apply(this, arguments);
+				// Relabel on EVERY pass, including the refresh one. Game.Prompt
+				// rewrites promptL.innerHTML wholesale (src/main.js:6334), and
+				// SetDragonAura re-enters here with update = 1 on every crate
+				// click (src/main.js:14916), so a refresh hands us brand new,
+				// unlabelled crates. Skipping them left the prompt mute and
+				// keyboard unreachable from the first selection onward.
+				MOD.labelDragonAuraPrompt(slot, update ? 'refresh' : 'open');
+				// Deferred re-label in case another mod re-renders the prompt
+				// after us. Silent and focus neutral, so it cannot double speak.
+				setTimeout(function() { MOD.labelDragonAuraPrompt(slot, 'quiet'); }, 50);
+				return result;
+			};
+			Game.SelectDragonAura._a11yWrapped = true;
+		}
+	},
+	// mode: 'open' announces the count and focuses the first crate;
+	//       'refresh' confirms the new selection and restores focus to it;
+	//       'quiet' relabels only, never speaks and never moves focus.
+	labelDragonAuraPrompt: function(slot, mode) {
+		var MOD = this;
+		var promptContent = l('promptContentPickDragonAura');
+		if (!promptContent) return;
+		var crates = promptContent.querySelectorAll('.crate');
+		// Which aura is equipped right now versus which one is merely pending.
+		// SetDragonAura only moves Game.SelectingDragonAura; nothing is applied
+		// until the prompt's own Confirm option runs (src/main.js:14911).
+		var currentAura = -1;
+		if (slot === 0) currentAura = Game.dragonAura;
+		else if (slot === 1) currentAura = Game.dragonAura2;
+		var selecting = Game.SelectingDragonAura;
+		var labeled = 0, focusTarget = null;
+		for (var i = 0; i < crates.length; i++) {
+			var crate = crates[i];
+			// The aura id lives in the crate's inline handler. The game builds it
+			// with Game.clickStr, which is 'ontouchend' on touch devices and
+			// 'onclick' otherwise, so read both.
+			var handler = crate.getAttribute('onclick') || crate.getAttribute('ontouchend') || '';
+			var match = handler.match(/SetDragonAura\((\d+)/);
+			if (!match) continue;
+			// Game.dragonAuras is an object keyed by id string, not an array.
+			var auraId = parseInt(match[1]);
+			var aura = Game.dragonAuras && Game.dragonAuras[auraId];
+			if (!aura) continue;
+			// dname is the localized name (src/main.js:14851); name is the raw
+			// English key. Every other aura readout in this mod reads dname, so
+			// reading name here spoke English in a translated game.
+			var name = aura.dname || aura.name;
+			// Same prefixes the inline dragon panel picker uses, so the two
+			// surfaces describe selection state the same way.
+			var prefix = '';
+			if (auraId === currentAura) prefix = 'Current aura. ';
+			else if (auraId === selecting) prefix = 'Selected. ';
+			crate.setAttribute('role', 'button');
+			crate.setAttribute('tabindex', '0');
+			crate.setAttribute('aria-label', prefix + name + '. ' + MOD.stripHtml(aura.desc || ''));
+			// Attributes are refreshed every pass, but the listener is attached
+			// once per node: a second listener on the same crate would fire two
+			// clicks per Enter.
+			if (!crate.dataset.a11yEnhanced) {
+				crate.dataset.a11yEnhanced = 'true';
+				(function(el) {
+					el.addEventListener('keydown', function(e) {
+						if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click(); }
+					});
+				})(crate);
+			}
+			if (auraId === selecting) focusTarget = crate;
+			labeled++;
+		}
+		if (!labeled || mode === 'quiet') return;
+		if (mode === 'refresh') {
+			// The rebuild destroyed the node the user activated and threw focus
+			// to the prompt wrapper. Land them on the equivalent new crate and
+			// say what they picked, or the keypress produces no speech at all.
+			var sel = Game.dragonAuras && Game.dragonAuras[selecting];
+			if (sel) MOD.announce('Selected: ' + (sel.dname || sel.name) + '. Choose Confirm to apply.', true);
+			if (focusTarget) { try { focusTarget.focus(); MOD.promptFocusClaimed = true; } catch(e) {} }
+			return;
+		}
+		MOD.announce(labeled + ' dragon aura' + (labeled === 1 ? '' : 's') + ' available. Tab through them, press Enter to choose one, then Confirm to apply.', true);
+		var first = promptContent.querySelector('.crate[aria-label]');
+		if (first) { try { first.focus(); MOD.promptFocusClaimed = true; } catch(e) {} }
 	},
 	labelPermanentUpgradePrompt: function() {
 		var MOD = this;
@@ -5701,6 +5907,17 @@ Game.registerMod("nvda accessibility", {
 		for (var i = 0; i < options.length; i++) {
 			options[i].setAttribute('role', 'button');
 		}
+		// Announce how many upgrades are on offer and land focus on the first
+		// crate, so the list is reachable without hunting for it. Only on the
+		// first labelling pass per prompt: re-labelling runs again after a
+		// selection, and moving focus then would yank the user back to the top.
+		if (!promptContent.dataset.a11yFocused) {
+			promptContent.dataset.a11yFocused = 'true';
+			MOD.announce(crates.length + ' upgrade' + (crates.length === 1 ? '' : 's') + ' available to slot', true);
+			if (crates.length > 0) {
+				try { crates[0].focus(); MOD.promptFocusClaimed = true; } catch(e) {}
+			}
+		}
 	},
 	labelPermanentUpgradePromptSelected: function() {
 		var MOD = this;
@@ -5727,18 +5944,49 @@ Game.registerMod("nvda accessibility", {
 			slotNone.setAttribute('aria-label', 'No upgrade selected');
 		}
 	},
-	labelChallengeModePrompt: function() {
+	// Default focus for a freshly built prompt, run 100 ms after Game.Prompt
+	// rebuilds the dialog. Stands down when a specialized labeller (aura,
+	// permanent slot, challenge mode) already placed focus on a crate for this
+	// build: those run at 0 to 50 ms, so without the claim this later callback
+	// would yank focus off the crate the player just activated and the keypress
+	// would read the title instead.
+	focusPromptDefault: function(promptContent, optionLinks) {
+		if (this.promptFocusClaimed) return false;
+		var heading = promptContent ? promptContent.querySelector('h3') : null;
+		if (heading) {
+			heading.setAttribute('tabindex', '-1');
+			try { heading.focus(); } catch(e) {}
+			return true;
+		}
+		if (optionLinks && optionLinks.length > 0) {
+			try { optionLinks[0].focus(); } catch(e) {}
+			return true;
+		}
+		return false;
+	},
+	// mode: 'open' labels a freshly opened prompt and leaves focus to the
+	//       generic Game.Prompt handler (the heading reads the whole dialog);
+	//       'refresh' confirms the new pick and restores focus to its crate.
+	labelChallengeModePrompt: function(mode) {
 		var MOD = this;
 		var promptContent = l('promptContentPickChallengeMode');
 		if (!promptContent) return;
+		var focusTarget = null, labelled = 0;
 		// Label each challenge mode crate
 		for (var i in Game.ascensionModes) {
 			var el = l('challengeModeSelector' + i);
 			if (!el) continue;
-			var mode = Game.ascensionModes[i];
-			var name = mode.dname || mode.name || 'Unknown';
-			var selected = (parseInt(i) === Game.nextAscensionMode) ? ' Currently selected.' : '';
-			el.setAttribute('aria-label', name + '.' + selected);
+			// Not named "mode": that is this function's parameter, and a var in
+			// here hoists over it, so the refresh branch below never matched.
+			var modeDef = Game.ascensionModes[i];
+			var name = modeDef.dname || modeDef.name || 'Unknown';
+			var isSelected = (parseInt(i) === Game.nextAscensionMode);
+			// Include the description: a challenge mode name alone ("Born again")
+			// does not say what the run actually changes.
+			var lbl = name + '. ';
+			if (isSelected) lbl += 'Currently selected. ';
+			lbl += MOD.stripHtml(modeDef.desc || '');
+			el.setAttribute('aria-label', lbl.trim());
 			el.setAttribute('role', 'button');
 			el.setAttribute('tabindex', '0');
 			if (!el.dataset.a11yEnhanced) {
@@ -5747,11 +5995,21 @@ Game.registerMod("nvda accessibility", {
 					if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.target.click(); }
 				});
 			}
+			if (isSelected) focusTarget = el;
+			labelled++;
 		}
 		// Label the Confirm option link
 		var options = promptContent.parentElement ? promptContent.parentElement.querySelectorAll('a.option') : [];
 		for (var j = 0; j < options.length; j++) {
 			options[j].setAttribute('role', 'button');
+		}
+		if (!labelled) return;
+		if (mode === 'refresh') {
+			// The rebuild destroyed the node the player activated, so without
+			// this the keypress produces no speech and focus is lost.
+			var sel = Game.ascensionModes && Game.ascensionModes[Game.nextAscensionMode];
+			if (sel) MOD.announce('Selected: ' + (sel.dname || sel.name || 'Unknown') + '. Choose Confirm to apply.', true);
+			if (focusTarget) { try { focusTarget.focus(); MOD.promptFocusClaimed = true; } catch(e) {} }
 		}
 	},
 	cleanupAscensionTree: function() {
@@ -5840,28 +6098,6 @@ Game.registerMod("nvda accessibility", {
 				crate.dataset.a11yEnhanced = 'true';
 				crate.addEventListener('keydown', function(e) {
 					if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); crate.click(); }
-				});
-			}
-		}
-	},
-	labelChallengeModeSelector: function() {
-		var MOD = this;
-		if (!Game.ascensionModes) return;
-		for (var i in Game.ascensionModes) {
-			var mode = Game.ascensionModes[i];
-			var el = l('challengeModeSelector' + i);
-			if (!el) continue;
-			var selected = (parseInt(i) === Game.nextAscensionMode);
-			var lbl = mode.dname + '. ';
-			if (selected) lbl += 'Selected. ';
-			lbl += MOD.stripHtml(mode.desc);
-			el.setAttribute('aria-label', lbl);
-			MOD.setAttributeIfChanged(el, 'role', 'button');
-			MOD.setAttributeIfChanged(el, 'tabindex', '0');
-			if (!el.dataset.a11yEnhanced) {
-				el.dataset.a11yEnhanced = 'true';
-				el.addEventListener('keydown', function(e) {
-					if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.click(); }
 				});
 			}
 		}
@@ -5966,7 +6202,8 @@ Game.registerMod("nvda accessibility", {
 		clearBtn.style.cssText = 'display:block;width:100%;padding:12px;margin:5px 0;background:#444;border:2px solid #666;color:#fff;cursor:pointer;text-align:left;font-size:14px;';
 		clearBtn.addEventListener('click', function() {
 			Game.permanentUpgrades[slotIndex] = -1;
-			MOD.announce('Slot ' + (slotIndex + 1) + ' cleared.');
+			// Forced: spoken from inside our own modal dialog.
+			MOD.announce('Slot ' + (slotIndex + 1) + ' cleared.', true);
 			dialog.remove();
 			// Reset slot enhancement flag so it updates
 			var slotEl = l('permanentUpgradeSlot' + slotIndex);
@@ -6005,7 +6242,8 @@ Game.registerMod("nvda accessibility", {
 				option.addEventListener('blur', function() { option.style.background = '#333'; option.style.borderColor = '#555'; });
 				option.addEventListener('click', function() {
 					Game.permanentUpgrades[slotIndex] = upg.id;
-					MOD.announce('Set ' + upgName + ' in slot ' + (slotIndex + 1) + '.');
+					// Forced: spoken from inside our own modal dialog.
+					MOD.announce('Set ' + upgName + ' in slot ' + (slotIndex + 1) + '.', true);
 					dialog.remove();
 					// Reset slot enhancement flag so it updates
 					var slotEl = l('permanentUpgradeSlot' + slotIndex);
@@ -6052,7 +6290,7 @@ Game.registerMod("nvda accessibility", {
 		dialog.addEventListener('keydown', function(e) {
 			if (e.key === 'Escape') { dialog.remove(); }
 		});
-		MOD.announce('Upgrade selection dialog opened for slot ' + (slotIndex + 1) + '. ' + availableUpgrades.length + ' upgrades available. Use Tab to navigate.');
+		MOD.announce('Upgrade selection dialog opened for slot ' + (slotIndex + 1) + '. ' + availableUpgrades.length + ' upgrades available. Use Tab to navigate.', true);
 	},
 	enhanceHeavenlyUpgrades: function() {
 		var MOD = this;
@@ -7469,9 +7707,20 @@ Game.registerMod("nvda accessibility", {
 		var achievementsToNext = (milkRank + 1) * 25 - achievementsOwned;
 		var maxRank = Game.Milks ? Game.Milks.length : 35;
 
-		// Get current milk name from Game.Milks array
+		// Resolve the milk flavour actually in effect, matching the game's own
+		// render decision (src/main.js:15815): a flavour chosen in the Milk
+		// selector wins, except in Born again ascensions where the game ignores
+		// the selector and falls back to the achievement rank milk.
+		// Game.AllMilks is the selector list (index 0 is Automatic); Game.Milks is
+		// the rank list. Reading the wrong one reports a flavour one slot off, and
+		// always reading Game.Milks made this readout contradict updateMilkLabel.
+		// Rank and percentage stay achievement-based either way.
 		var milkName = 'Plain milk';
-		if (Game.Milks && Game.Milks[milkRank]) {
+		var selectorActive = (Game.milkType !== undefined && Game.milkType > 0 &&
+			Game.ascensionMode !== 1 && Game.AllMilks && Game.AllMilks[Game.milkType]);
+		if (selectorActive) {
+			milkName = Game.AllMilks[Game.milkType].name || milkName;
+		} else if (Game.Milks && Game.Milks[milkRank]) {
 			milkName = Game.Milks[milkRank].name || milkName;
 		}
 
