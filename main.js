@@ -684,8 +684,8 @@ Game.registerMod("screen reader accessibility", {
 				MOD.filterUnownedBuildings();
 			}, 100);
 		});
-		Game.Notify('Accessibility Enhanced', 'Version 14.0', [10, 0], 6);
-		this.announce('Screen Reader Accessibility mod version 14.0 loaded.');
+		Game.Notify('Accessibility Enhanced', 'Version 14.1', [10, 0], 6);
+		this.announce('Screen Reader Accessibility mod version 14.1 loaded.');
 	},
 	overrideDrawBuildings: function() {
 		var MOD = this;
@@ -4265,16 +4265,9 @@ Game.registerMod("screen reader accessibility", {
 					if (!pan) return;
 					var currentGod = pan.godsById[godId];
 					if (!currentGod) return;
-					// Already in this slot — say so plainly. Must come before the
-					// occupied check below, which would otherwise report the
-					// spirit's own slot as "occupied".
+					// Staying in the same slot costs nothing, even with no swaps left.
 					if (pan.slot[slotIndex] === currentGod.id) {
 						MOD.announce(godName + ' is already in the ' + slotName + ' slot');
-						return;
-					}
-					// Slot occupied — must remove that god first
-					if (pan.slot[slotIndex] !== -1) {
-						MOD.announce('Slot already occupied');
 						return;
 					}
 					// The swap limit is real: minigamePantheon.js dropGod() refuses
@@ -4285,12 +4278,18 @@ Game.registerMod("screen reader accessibility", {
 						MOD.announce('Cannot place ' + godName + '. No worship swaps available.');
 						return;
 					}
+					// slotGod exchanges occupants, or returns the displaced god to
+					// the roster when this god was unslotted, just like dropGod.
+					var displacedGod = pan.godsById[pan.slot[slotIndex]];
 					try {
 						pan.slotGod(currentGod, slotIndex);
 						// Announce the real outcome by reading the slot back rather
 						// than assuming slotGod took effect.
 						if (pan.slot[slotIndex] === currentGod.id) {
 							pan.useSwap(1);
+							pan.lastSwapT = 0;
+							MOD.syncPantheonGodIcon(displacedGod);
+							MOD.syncPantheonGodIcon(currentGod);
 							MOD.announce(godName + ' placed in ' + slotName + ' slot');
 						} else {
 							MOD.announce('Could not place ' + godName + ' in the ' + slotName + ' slot');
@@ -4304,6 +4303,23 @@ Game.registerMod("screen reader accessibility", {
 			})(i, slots[i]);
 		}
 		anchorEl.parentNode.insertBefore(container, anchorEl.nextSibling);
+	},
+	syncPantheonGodIcon: function(god) {
+		if (!god) return;
+		var godEl = l('templeGod' + god.id);
+		if (!godEl) return;
+		// slotGod updates state, not DOM; mirror dropGod's icon placement.
+		// Accessibility headings and buttons stay at their stable roster positions.
+		if (god.slot >= 0) {
+			var slotEl = l('templeSlot' + god.slot);
+			if (slotEl) slotEl.appendChild(godEl);
+		} else {
+			var placeholder = l('templeGodPlaceholder' + god.id);
+			if (placeholder && placeholder.parentNode) {
+				placeholder.parentNode.insertBefore(godEl, placeholder);
+				placeholder.style.display = 'none';
+			}
+		}
 	},
 	updateSpiritSlotButtons: function(god, currentSlot) {
 		var MOD = this;
@@ -7832,28 +7848,6 @@ Game.registerMod("screen reader accessibility", {
 		if (milkProgress) {
 			milkProgress.setAttribute('aria-hidden', 'true');
 		}
-		// Hide FPS and undefined elements from screen readers
-		if (leftColumn) {
-			leftColumn.querySelectorAll('div, span').forEach(function(el) {
-				if (el.id === 'cookies' || el.id === 'bigCookie' || el.id === 'cookieNumbers' || el.id === 'milkLayer' || el.id === 'milk' || el.id === 'lumps') return;
-				var text = (el.textContent || '').trim();
-				// Hide elements containing "undefined" or just a number (likely FPS)
-				if (text.toLowerCase().includes('undefined') || /^\d+$/.test(text)) {
-					el.setAttribute('aria-hidden', 'true');
-					MOD.setAttributeIfChanged(el, 'tabindex', '-1');
-				}
-			});
-		}
-		// Also hide any standalone 2-3 digit numbers anywhere in the game area (FPS display)
-		document.querySelectorAll('#game div, #game span').forEach(function(el) {
-			if (el.children.length > 0) return; // Only leaf nodes
-			if (el.id === 'lumps' || el.closest('#lumps')) return; // Don't hide sugar lump elements
-			var text = (el.textContent || '').trim();
-			if (/^\d{2,3}$/.test(text)) {
-				el.setAttribute('aria-hidden', 'true');
-				MOD.setAttributeIfChanged(el, 'tabindex', '-1');
-			}
-		});
 		// Label menu buttons area
 		var menuButtons = document.querySelectorAll('#prefsButton, #statsButton, #logButton');
 		menuButtons.forEach(function(btn) {
@@ -7861,7 +7855,7 @@ Game.registerMod("screen reader accessibility", {
 		});
 		// Update Milk display
 		MOD.updateMilkDisplay();
-		// Find any unlabeled number displays
+		// Hide only known FPS decorations, not arbitrary numeric text
 		MOD.findAndLabelUnknownDisplays();
 	},
 	labelCookieNumbers: function(el) {
@@ -7993,7 +7987,8 @@ Game.registerMod("screen reader accessibility", {
 			if (productLevelEl) {
 				MOD.setAttributeIfChanged(productLevelEl, 'aria-label', MOD.getBuildingLevelLabel(bld));
 				MOD.setAttributeIfChanged(productLevelEl, 'role', 'button');
-				MOD.setAttributeIfChanged(productLevelEl, 'tabindex', '0');
+				// Cursor uses the proxy above; never re-enable its hidden original.
+				MOD.setAttributeIfChanged(productLevelEl, 'tabindex', bld.id === 0 ? '-1' : '0');
 			}
 			// Also label the productMinigameButton in the right section (opens/closes minigame)
 			var productMgBtn = l('productMinigameButton' + bld.id);
@@ -8035,51 +8030,15 @@ Game.registerMod("screen reader accessibility", {
 	},
 	findAndLabelUnknownDisplays: function() {
 		var MOD = this;
-		// Hide FPS counter from screen readers
-		var fpsEl = l('fps');
-		if (fpsEl) {
-			fpsEl.setAttribute('aria-hidden', 'true');
-		}
-		// Hide standalone numbers, "undefined" text, and fix bad labels across the page
-		var sectionLeft = l('sectionLeft');
-		var sectionMiddle = l('sectionMiddle');
-		var sections = [sectionLeft, sectionMiddle];
-		sections.forEach(function(section) {
-			if (!section) return;
-			section.querySelectorAll('div, span, button').forEach(function(el) {
-				if (el.getAttribute('aria-hidden') === 'true') return;
-				if (el.getAttribute('role') === 'button') return;
-				if (el.id === 'lumps' || el.closest('#lumps')) return; // Don't hide sugar lump elements
-				var text = (el.textContent || '').trim();
-				var label = (el.getAttribute('aria-label') || '').toLowerCase();
-				// Hide elements with just numbers (FPS) or containing "undefined"
-				if (/^\d+$/.test(text) || text.toLowerCase().includes('undefined') || label.includes('undefined')) {
-					el.setAttribute('aria-hidden', 'true');
-				}
-			});
-		});
-		// Hide numbers near menu buttons (likely FPS) and fix undefined labels
-		var prefsButton = l('prefsButton');
-		if (prefsButton) {
-			var parent = prefsButton.parentNode;
-			if (parent) {
-				for (var i = 0; i < parent.children.length; i++) {
-					var child = parent.children[i];
-					if (child.id === 'prefsButton' || child.id === 'statsButton' || child.id === 'logButton') continue;
-					if (child.id === 'lumps' || child.closest('#lumps')) continue; // Don't hide sugar lump elements
-					var text = (child.textContent || '').trim();
-					var label = (child.getAttribute('aria-label') || '').toLowerCase();
-					// Hide standalone numbers and undefined text/labels
-					if (/^\d+$/.test(text) || text.toLowerCase().includes('undefined') || label.includes('undefined')) {
-						child.setAttribute('aria-hidden', 'true');
-					}
-				}
-			}
-		}
-		// Also scan for any elements with "undefined" in aria-label anywhere on page
-		document.querySelectorAll('[aria-label*="undefined"]').forEach(function(el) {
-			if (el.id === 'lumps' || el.closest('#lumps')) return; // Don't hide sugar lump elements
-			el.setAttribute('aria-hidden', 'true');
+		// Never infer decoration from textContent or an aria-label. The fully
+		// upgraded Stock Market has a CSS-hidden "undefined cursors" button;
+		// its textContent reaches #rows and used to hide every building control.
+		// Numeric text can also be a trading control or a meaningful readout.
+		['fps', 'fpsCounter'].forEach(function(id) {
+			var fpsEl = l(id);
+			if (!fpsEl) return;
+			MOD.setAttributeIfChanged(fpsEl, 'aria-hidden', 'true');
+			MOD.setAttributeIfChanged(fpsEl, 'tabindex', '-1');
 		});
 	},
 	updateMainInterfaceDisplays: function() {
@@ -8095,7 +8054,7 @@ Game.registerMod("screen reader accessibility", {
 			MOD.setTextIfChanged(cpcDiv, cpcText);
 			MOD.setAttributeIfChanged(cpcDiv, 'aria-label', cpcText);
 		}
-		// Update any mystery number labels
+		// Keep known FPS decorations hidden if the game recreates them
 		MOD.findAndLabelUnknownDisplays();
 	},
 

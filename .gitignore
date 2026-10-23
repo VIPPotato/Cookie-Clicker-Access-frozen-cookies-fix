@@ -4,6 +4,8 @@ notes/
 *.zip
 nul
 .claude/
-CLAUDE.md
 todo.md
 project status.md
+project_status.md
+AGENTS.md
+CLAUDE.md

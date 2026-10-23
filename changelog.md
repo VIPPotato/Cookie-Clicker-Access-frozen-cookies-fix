@@ -1,5 +1,13 @@
 # Cookie Clicker Access - Changelog
 
+## Version 14.1
+
+- Fixed building and trading controls disappearing from screen readers after opening a fully upgraded Stock Market. Display cleanup now hides only known FPS decorations, leaving numeric controls and readouts accessible.
+- Removed the hidden original Cursor level-up button from the Tab order. The accessible Cursor button remains available, without a duplicate Tab stop.
+- Pantheon spirits can replace an occupied slot or exchange slots for one worship swap, matching the game's controls. Both icons and slot descriptions update after placement. Staying in the same slot costs nothing, and placement is refused when no swaps remain.
+
+Verification: 231 automated checks pass. The Stock Market fix has been confirmed in game with NVDA. Cursor and Pantheon changes passed isolated browser checks; their in-game NVDA checks are still pending.
+
 ## Version 14.0
 
 ### Renamed for all screen readers

@@ -1,11 +1,11 @@
-// Test harness for Cookie Clicker Access v14.0 changes.
+// Test harness for Cookie Clicker Access v14.1 changes.
 // Loads main.js in a fake Game/DOM environment and exercises the changed logic.
 // Run: node harness.js   (exit 0 = all green)
 'use strict';
 const fs = require('fs');
 
 const MAIN = process.env.CC_MAIN ||
-  'D:/Documents/projects/games/!done/Cookie-Clicker-Access-frozen-cookies-fix/main.js';
+  require('path').join(__dirname, '..', 'main.js');
 
 let pass = 0, fail = 0;
 const failures = [];
@@ -84,6 +84,14 @@ class El {
     const i = this.parentNode.children.indexOf(this);
     return i > 0 ? this.parentNode.children[i - 1] : null;
   }
+  closest(sel) {
+    const seen = new Set();
+    for (let el = this; el && !seen.has(el); el = el.parentElement) {
+      seen.add(el);
+      if (sel.split(',').some(part => matchOne(el, part))) return el;
+    }
+    return null;
+  }
   get firstChild() { return this.children[0] || null; }
   get childNodes() { return this.children; }
   set textContent(v) { this._text = String(v); this.children = []; }
@@ -107,12 +115,17 @@ function matchOne(el, part) {
   if (!part) return false;
   const notM = part.match(/^(.*):not\(\[([^\]]+)\]\)$/);
   if (notM) return matchOne(el, notM[1] || '*') && !el.hasAttribute(notM[2]);
-  const attrM = part.match(/^([a-zA-Z0-9.#*]*)\[([a-zA-Z0-9-]+)(?:\s*=\s*"([^"]*)")?\]$/);
+  const attrM = part.match(/^([a-zA-Z0-9.#*_-]*)\[([a-zA-Z0-9-]+)(?:\s*(\*=|\^=|\$=|=)\s*"([^"]*)")?\]$/);
   if (attrM) {
-    const [, base, attr, val] = attrM;
+    const [, base, attr, op, val] = attrM;
     if (base && !matchOne(el, base)) return false;
     if (!el.hasAttribute(attr)) return false;
-    return val === undefined || el.getAttribute(attr) === val;
+    const actual = el.getAttribute(attr);
+    if (!op) return true;
+    if (op === '*=') return actual.includes(val);
+    if (op === '^=') return actual.startsWith(val);
+    if (op === '$=') return actual.endsWith(val);
+    return actual === val;
   }
   if (part === '*') return true;
   if (part[0] === '#') return el.id === part.slice(1);
@@ -153,6 +166,8 @@ const DOC = {
   body: new El('body'),
   createElement: t => new El(t),
   getElementById: id => DOC.body._all().find(e => e.id === id) || null,
+  querySelectorAll: sel => DOC.body.querySelectorAll(sel),
+  querySelector: sel => DOC.body.querySelector(sel),
   addEventListener() {},
   get activeElement() { return DOC._focused; }
 };
@@ -408,7 +423,7 @@ section("4. Pantheon placement: verify then announce", function () {
     };
     const M = {
       gods, godsById: { 0: gods.asceticism, 1: gods.decadence, 2: gods.ruin },
-      slot: slots.slice(), swaps: swaps, swapsUsed: 0, slotGodCalls: 0,
+      slot: slots.slice(), swaps: swaps, swapsUsed: 0, slotGodCalls: 0, lastSwapT: 99,
       // Mirrors minigamePantheon.js slotGod(): moves the god, swapping occupants.
       slotGod(god, slot) {
         M.slotGodCalls++;
@@ -431,7 +446,18 @@ section("4. Pantheon placement: verify then announce", function () {
     MOD.enhancePantheonMinigame = function () {};   // avoid a full DOM rebuild in test
     DOC.body.children = [];
     const host = new El('div'); DOC.body.appendChild(host);
-    const anchor = new El('div'); host.appendChild(anchor);
+    const roster = new El('div'); roster.id = 'testPantheonRoster'; host.appendChild(roster);
+    for (let i = 0; i < 3; i++) {
+      const slot = new El('div'); slot.id = 'templeSlot' + i; host.appendChild(slot);
+    }
+    for (const god of Object.values(pan.godsById)) {
+      const placeholder = new El('div'); placeholder.id = 'templeGodPlaceholder' + god.id;
+      roster.appendChild(placeholder);
+      const icon = new El('div'); icon.id = 'templeGod' + god.id;
+      if (god.slot >= 0) l('templeSlot' + god.slot).appendChild(icon);
+      else roster.insertBefore(icon, placeholder);
+    }
+    const anchor = l('templeGodPlaceholder' + godId);
     MOD.createSpiritSlotButtons(pan.godsById[godId], anchor, pan, SLOTS);
     const container = anchor.nextSibling;          // inserted after the anchor
     if (!container) throw new Error('slot buttons were never inserted');
@@ -445,6 +471,8 @@ section("4. Pantheon placement: verify then announce", function () {
   eq('places into an empty slot', pan.slot[0], 0);
   eq('spends exactly one swap', pan.swapsUsed, 1);
   eq('announces the placement', said[0], 'Asceticism placed in Diamond slot');
+  eq('accepted placement refreshes the native swap readout', pan.lastSwapT, 0);
+  ok('empty-slot placement moves its native icon too', l('templeGod0').parentNode === l('templeSlot0'));
 
   pan = makePantheon([0, -1, -1], 3);
   said = pantheonRun(pan, 0, 0);
@@ -452,10 +480,43 @@ section("4. Pantheon placement: verify then announce", function () {
   eq('already in slot spends no swap', pan.swapsUsed, 0);
   eq('already in slot never calls slotGod', pan.slotGodCalls, 0);
 
+  // Refusal is still required without worship swaps, not merely because occupied.
+  // The old occupied-with-swaps assertion pinned a restriction native dropGod lacks.
+  pan = makePantheon([1, -1, -1], 0);
+  said = pantheonRun(pan, 0, 0);
+  eq('occupied-slot placement without swaps is refused', said[0], 'Cannot place Asceticism. No worship swaps available.');
+  eq('refusal spends no swap', pan.swapsUsed, 0);
+  eq('refusal leaves the incumbent in its slot', pan.slot[0], 1);
+  eq('refusal never invokes slotGod', pan.slotGodCalls, 0);
+  eq('refusal does not reset the swap readout', pan.lastSwapT, 99);
+
   pan = makePantheon([1, -1, -1], 3);
   said = pantheonRun(pan, 0, 0);
-  eq('an occupied slot is refused', said[0], 'Slot already occupied');
-  eq('refusal spends no swap', pan.swapsUsed, 0);
+  eq('a roster spirit can replace an occupied slot', pan.slot[0], 0);
+  eq('the displaced spirit returns to the roster in game state', pan.godsById[1].slot, -1);
+  eq('a replacement costs exactly one worship swap', pan.swapsUsed, 1);
+  eq('replacement announces its verified result', said[0], 'Asceticism placed in Diamond slot');
+  ok('replacement moves the selected native icon into the slot', l('templeGod0').parentNode === l('templeSlot0'));
+  ok('replacement returns the displaced native icon to its placeholder',
+    l('templeGod1').nextSibling === l('templeGodPlaceholder1'));
+  eq('returned spirit placeholder remains hidden', l('templeGodPlaceholder1').style.display, 'none');
+
+  pan = makePantheon([1, 0, 2], 2);
+  said = pantheonRun(pan, 0, 0);
+  eq('two occupied slots exchange their spirit IDs', JSON.stringify(pan.slot), JSON.stringify([0, 1, 2]));
+  eq('the displaced spirit inherits the previous slot', pan.godsById[1].slot, 1);
+  eq('an exchange spends one swap, not two', pan.swapsUsed, 1);
+  eq('one available swap remains after the exchange', pan.swaps, 1);
+  eq('an exchange is confirmed once', said.length, 1);
+  ok('both native icons follow their new slots',
+    l('templeGod0').parentNode === l('templeSlot0') && l('templeGod1').parentNode === l('templeSlot1'));
+  ok('the unrelated third spirit does not move', l('templeGod2').parentNode === l('templeSlot2'));
+
+  pan = makePantheon([1, 0, -1], 0);
+  said = pantheonRun(pan, 0, 0);
+  eq('an occupied-to-occupied exchange is refused without swaps', pan.slotGodCalls, 0);
+  eq('a refused exchange leaves both slots unchanged', JSON.stringify(pan.slot), JSON.stringify([1, 0, -1]));
+  eq('a refused exchange spends nothing', pan.swapsUsed, 0);
 
   pan = makePantheon([-1, -1, -1], 0);
   said = pantheonRun(pan, 0, 1);
@@ -469,6 +530,14 @@ section("4. Pantheon placement: verify then announce", function () {
   eq('a silent slotGod failure is reported, not assumed',
     said[0], 'Could not place Asceticism in the Jade slot');
   eq('a failed placement spends no swap', pan.swapsUsed, 0);
+
+  pan = makePantheon([1, 0, -1], 3);
+  pan.slotGod = function () { pan.slotGodCalls++; };
+  said = pantheonRun(pan, 0, 0);
+  eq('a failed exchange is not announced as success', said[0], 'Could not place Asceticism in the Diamond slot');
+  eq('a failed exchange spends no swap', pan.swapsUsed, 0);
+  ok('a failed exchange moves neither native icon',
+    l('templeGod0').parentNode === l('templeSlot1') && l('templeGod1').parentNode === l('templeSlot0'));
 
   pan = makePantheon([-1, -1, -1], 3);
   pan.slotGod = function () { throw new Error('game blew up'); };
@@ -835,6 +904,154 @@ section("8. Source invariants: no duplicate game-function wrappers", function ()
   ok('the superseded labelChallengeModeSelector is neither defined nor called',
     !/labelChallengeModeSelector\s*(?::\s*function|\()/.test(text));
   // =====================================================================
+});
+section("9. Display cleanup preserves gameplay controls", function () {
+  need(['findAndLabelUnknownDisplays', 'labelMysteryElements', 'updateMainInterfaceDisplays', 'labelBuildingRows']);
+
+  function fixture() {
+    DOC.body.children = []; DOC._focused = null;
+    function node(parent, tag, id, text) {
+      const el = new El(tag); el.id = id;
+      if (text !== undefined) el.textContent = text;
+      parent.appendChild(el); return el;
+    }
+    const game = node(DOC.body, 'div', 'game');
+    const left = node(game, 'div', 'sectionLeft');
+    const middle = node(game, 'div', 'sectionMiddle');
+    const right = node(game, 'div', 'sectionRight');
+    const numericGroup = node(left, 'div', 'numericGroup');
+    const numericText = node(numericGroup, 'span', 'numericText', '123');
+    numericText.setAttribute('tabindex', '0');
+    const cookies = node(left, 'div', 'cookies', '100 cookies');
+    cookies.setAttribute('tabindex', '0');
+    const particles = node(left, 'div', 'cookieNumbers', '100');
+    const milk = node(left, 'div', 'milk', '100');
+    const menu = node(middle, 'div', 'menuButtons');
+    node(menu, 'div', 'prefsButton', 'Options');
+    const menuReadout = node(menu, 'div', 'menuReadout', 'undefined value');
+    const fps = node(menu, 'div', 'fps', '30');
+    const fpsCounter = node(menu, 'div', 'fpsCounter', '30 fps');
+    const rows = node(middle, 'div', 'rows');
+    const row = node(rows, 'div', 'row5');
+    const level = node(row, 'div', 'productLevel5', 'lvl 4');
+    level.setAttribute('onclick', 'Game.Objects.Bank.levelUp();');
+    const toggle = node(row, 'div', 'productMinigameButton5', 'Stock Market');
+    toggle.setAttribute('onclick', 'Game.Objects.Bank.switchMinigame();');
+    const special = node(row, 'div', 'rowSpecial5');
+    special.style.display = 'none';
+    const content = node(special, 'div', 'bankContent');
+    const header = node(content, 'div', 'bankHeader');
+    const office = node(header, 'div', 'bankOffice');
+    // Native M.draw() at officeLevel 5 writes this before hiding the button.
+    // CSS-hidden descendants still contribute to every ancestor's textContent.
+    const upgrade = node(office, 'div', 'bankOfficeUpgrade', 'Upgrade (undefined cursors)');
+    upgrade.style.display = 'none';
+    const buy = node(content, 'div', 'bankGood-0_10', '10');
+    buy.setAttribute('role', 'button');
+    buy.setAttribute('tabindex', '0');
+    buy.setAttribute('aria-label', 'Buy 10 shares');
+    const stock = node(content, 'span', 'bankGood-0-stock', '100');
+    const readout = node(right, 'button', 'readout', 'Read value');
+    readout.setAttribute('aria-label', 'Read undefined value');
+    readout.setAttribute('tabindex', '0');
+    const hidden = node(right, 'div', 'intentionalDecoration', '123');
+    hidden.setAttribute('aria-hidden', 'true');
+    hidden.setAttribute('tabindex', '-1');
+    const bank = { id: 5, name: 'Bank', level: 4, onMinigame: false, minigame: { name: 'Stock Market' } };
+    Game.ObjectsN = 6; Game.ObjectsById = { 5: bank }; Game.Objects = { Bank: bank };
+    MOD.labelBuildingRows();
+    return { bank, rows, special, content, header, office, upgrade, level, toggle,
+      buy, stock, numericGroup, numericText, menuReadout, fps, fpsCounter, readout, hidden, cookies, particles, milk };
+  }
+  function exposed(el) {
+    const seen = new Set();
+    for (let node = el; node && !seen.has(node); node = node.parentElement) {
+      seen.add(node);
+      if (node.getAttribute('aria-hidden') === 'true' || node.style.display === 'none') return false;
+    }
+    return true;
+  }
+
+  for (const entry of ['findAndLabelUnknownDisplays', 'updateMainInterfaceDisplays', 'labelMysteryElements']) {
+    const f = fixture();
+    const check = name => entry + ': ' + name;
+    MOD[entry]();
+    ok(check('building controls remain exposed with the market closed'), exposed(f.level) && exposed(f.toggle));
+    for (let cycle = 1; cycle <= 2; cycle++) {
+      f.bank.onMinigame = true; f.special.style.display = '';
+      MOD.labelBuildingRows(); DOC._focused = f.buy;
+      MOD[entry](); MOD[entry]();
+      ok(check('open cycle ' + cycle + ' preserves building and trading controls'),
+        [f.level, f.toggle, f.buy].every(exposed));
+      ok(check('open cycle ' + cycle + ' leaves all gameplay ancestors unhidden'),
+        [f.rows, f.special, f.content, f.header, f.office].every(el => el.getAttribute('aria-hidden') !== 'true'));
+      ok(check('cleanup does not move focus'), DOC._focused === f.buy);
+      eq(check('numeric trading control remains in the tab order'), f.buy.getAttribute('tabindex'), '0');
+      f.bank.onMinigame = false; f.special.style.display = 'none';
+      MOD.labelBuildingRows(); MOD[entry]();
+      ok(check('close cycle ' + cycle + ' preserves building controls'), exposed(f.level) && exposed(f.toggle));
+      ok(check('closed market controls remain hidden by the native display state'), !exposed(f.buy));
+    }
+    ok(check('numeric values and their parent stay readable'), exposed(f.numericGroup) && exposed(f.numericText));
+    eq(check('numeric value retains its tab stop'), f.numericText.getAttribute('tabindex'), '0');
+    ok(check('numeric stock value is not aria-hidden'), f.stock.getAttribute('aria-hidden') !== 'true');
+    ok(check('menu sibling text is not treated as decoration'), exposed(f.menuReadout));
+    ok(check('undefined in a label does not hide a control elsewhere'), exposed(f.readout));
+    eq(check('existing intentional hiding is preserved'), f.hidden.getAttribute('aria-hidden'), 'true');
+    eq(check('existing intentional tabindex is preserved'), f.hidden.getAttribute('tabindex'), '-1');
+    eq(check('known FPS decoration is hidden'), f.fps.getAttribute('aria-hidden'), 'true');
+    eq(check('native fpsCounter decoration is hidden'), f.fpsCounter.getAttribute('aria-hidden'), 'true');
+    ok(check('fully upgraded office button stays CSS-hidden'), !exposed(f.upgrade));
+    if (entry === 'labelMysteryElements') {
+      eq(check('floating cookie numbers stay hidden'), f.particles.getAttribute('aria-hidden'), 'true');
+      eq(check('visual milk stays hidden'), f.milk.getAttribute('aria-hidden'), 'true');
+      eq(check('duplicate cookie counter stays out of tab order'), f.cookies.getAttribute('tabindex'), null);
+    }
+  }
+  DOC.body.children = []; DOC._focused = null;
+  MOD.findAndLabelUnknownDisplays();
+  ok('cleanup tolerates missing decoration elements', true);
+  // =====================================================================
+});
+section("10. Cursor level proxy owns keyboard focus", function () {
+  need(['labelBuildingRows']);
+  DOC.body.children = []; DOC._focused = null;
+  function node(parent, id) {
+    const el = new El('div'); el.id = id; parent.appendChild(el); return el;
+  }
+  const left = node(DOC.body, 'sectionLeft');
+  const extra = node(left, 'sectionLeftExtra');
+  const original = node(extra, 'productLevel0');
+  const originalMinigame = node(extra, 'productMinigameButton0');
+  const rows = node(DOC.body, 'rows');
+  const bankRow = node(rows, 'row5');
+  const bankLevel = node(bankRow, 'productLevel5');
+  let levelUps = 0;
+  const cursor = { id: 0, name: 'Cursor', level: 1, levelUp() { levelUps++; } };
+  const bank = { id: 5, name: 'Bank', level: 4 };
+  Game.ObjectsById = { 0: cursor, 5: bank }; Game.ObjectsN = 6;
+  Game.Objects = { Cursor: cursor, Bank: bank };
+  for (let pass = 1; pass <= 3; pass++) {
+    MOD.labelBuildingRows();
+    const proxy = l('a11yCursorLevelBtn');
+    eq('pass ' + pass + ': original Cursor remains aria-hidden', original.getAttribute('aria-hidden'), 'true');
+    eq('pass ' + pass + ': hidden Cursor stays out of Tab order', original.getAttribute('tabindex'), '-1');
+    eq('pass ' + pass + ': Cursor proxy remains tabbable', proxy && proxy.getAttribute('tabindex'), '0');
+    eq('pass ' + pass + ': other building levels remain tabbable', bankLevel.getAttribute('tabindex'), '0');
+    eq('pass ' + pass + ': unused Cursor minigame stays untabbable', originalMinigame.getAttribute('tabindex'), '-1');
+  }
+  eq('repeated labelling creates one Cursor proxy', rows._all().filter(el => el.id === 'a11yCursorLevelBtn').length, 1);
+  const proxy = l('a11yCursorLevelBtn');
+  proxy.focus(); MOD.labelBuildingRows();
+  ok('relabelling leaves focus on the Cursor proxy', DOC._focused === proxy);
+  proxy.dispatch('keydown', { key: 'Enter', preventDefault() {} });
+  eq('Enter invokes native levelUp once after repeated labelling', levelUps, 1);
+  proxy.dispatch('keydown', { key: ' ', preventDefault() {} });
+  eq('Space invokes native levelUp once', levelUps, 2);
+  // El.click() records listeners only; invoke the real onclick property here.
+  proxy.onclick();
+  eq('click still invokes native levelUp once', levelUps, 3);
+  DOC.body.children = []; DOC._focused = null;
 });
 console.log('\n=============================================');
 console.log('PASS ' + pass + '   FAIL ' + fail);
