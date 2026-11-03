@@ -684,8 +684,8 @@ Game.registerMod("screen reader accessibility", {
 				MOD.filterUnownedBuildings();
 			}, 100);
 		});
-		Game.Notify('Accessibility Enhanced', 'Version 14.1', [10, 0], 6);
-		this.announce('Screen Reader Accessibility mod version 14.1 loaded.');
+		Game.Notify('Accessibility Enhanced', 'Version 14.1.1', [10, 0], 6);
+		this.announce('Screen Reader Accessibility mod version 14.1.1 loaded.');
 	},
 	overrideDrawBuildings: function() {
 		var MOD = this;
@@ -5347,7 +5347,8 @@ Game.registerMod("screen reader accessibility", {
 		var t = n + '. ';
 		if (u.bought) {
 			t += 'Purchased.';
-			if (typeof u.displayFuncWhenOwned === 'function') {
+			// Season countdown and cancellation are described once below.
+			if (!u.season && typeof u.displayFuncWhenOwned === 'function') {
 				try {
 					var df = MOD.stripHtml(u.displayFuncWhenOwned());
 					if (df) t += ' ' + df + '.';
@@ -5365,7 +5366,11 @@ Game.registerMod("screen reader accessibility", {
 			var seasonName = seasonObj ? seasonObj.name : u.season;
 			var isActiveSeason = (Game.season === u.season);
 			if (isActiveSeason) {
-				var timeRem = (Game.seasonT > 0 && Game.fps && typeof Game.sayTime === 'function') ? ' (' + Game.sayTime(Game.seasonT + Game.fps, -1) + ' remaining)' : '';
+				var timeRem = '';
+				if (Game.Has('Eternal seasons')) timeRem = ' (forever remaining)';
+				else if (Game.seasonT > 0 && Game.fps && typeof Game.sayTime === 'function') {
+					timeRem = ' (' + Game.sayTime(Game.seasonT, -1) + ' remaining)';
+				}
 				t += ' (Active season: ' + seasonName + timeRem + '. Click to cancel season).';
 			} else {
 				t += ' (Triggers ' + seasonName + ' season).';

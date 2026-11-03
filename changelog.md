@@ -1,5 +1,12 @@
 # Cookie Clicker Access - Changelog
 
+## Version 14.1.1
+
+- Fixed active season buttons repeating their countdown and cancellation instruction. Seasonal collection counts are still included.
+- The countdown uses the same time as the game. Eternal seasons reports forever instead of a countdown.
+
+Verification: 270 automated checks and 29 isolated browser checks pass. The browser checks use the installed game's season functions. In-game NVDA verification of this patch is still pending.
+
 ## Version 14.1
 
 - Fixed building and trading controls disappearing from screen readers after opening a fully upgraded Stock Market. Display cleanup now hides only known FPS decorations, leaving numeric controls and readouts accessible.

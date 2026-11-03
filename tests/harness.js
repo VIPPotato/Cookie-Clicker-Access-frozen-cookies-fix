@@ -1,4 +1,4 @@
-// Test harness for Cookie Clicker Access v14.1 changes.
+// Test harness for Cookie Clicker Access regression checks.
 // Loads main.js in a fake Game/DOM environment and exercises the changed logic.
 // Run: node harness.js   (exit 0 = all green)
 'use strict';
@@ -1051,6 +1051,87 @@ section("10. Cursor level proxy owns keyboard focus", function () {
   // El.click() records listeners only; invoke the real onclick property here.
   proxy.onclick();
   eq('click still invokes native levelUp once', levelUps, 3);
+  DOC.body.children = []; DOC._focused = null;
+});
+section("11. Season switch labels describe the active season once", function () {
+  need(['populateUpgradeLabel', 'getSeasonDropSummary']);
+  DOC.body.children = []; DOC._focused = null;
+  const store = new El('div'); store.id = 'toggleUpgrades'; DOC.body.appendChild(store);
+  const crate = new El('div'); crate.setAttribute('data-id', '182'); store.appendChild(crate);
+  const reader = new El('span'); reader.id = 'ariaReader-upgrade-182'; DOC.body.appendChild(reader);
+  const seasons = {
+    christmas: ['Festive biscuit', 'Christmas', "14/14 Santa's gifts, 3/7 reindeer cookies unlocked"],
+    valentines: ['Lovesick biscuit', "Valentine's day", '2/7 heart biscuits unlocked'],
+    easter: ['Bunny biscuit', 'Easter', '4/20 eggs unlocked'],
+    halloween: ['Ghostly biscuit', 'Halloween', '5/7 halloween cookies unlocked'],
+    fools: ["Fool's biscuit", 'Business day', '']
+  };
+  Game.seasons = Object.fromEntries(Object.entries(seasons).map(([key, value]) => [key, { name: value[1] }]));
+  Game.GetHowManySantaDrops = () => 14; Game.GetHowManyReindeerDrops = () => 3;
+  Game.GetHowManyHeartDrops = () => 2; Game.GetHowManyEggs = () => 4; Game.GetHowManyHalloweenDrops = () => 5;
+  Game.fps = 30; Game.seasonT = 2581800; Game.cookies = 100;
+  Game.sayTime = frames => frames === 2581800 ? '23h 54m 20s' : frames === 2581770 ? '23h 54m 19s' : 'different countdown';
+  let eternal = false;
+  Game.Has = name => name === 'Eternal seasons' && eternal;
+  const nativeDisplay = function () {
+    return '<div>Time remaining:<br><b>' + (Game.Has('Eternal seasons') ? 'forever' : Game.sayTime(Game.seasonT, -1)) +
+      '</b><div>(Click again to cancel season)</div></div>';
+  };
+  const upgrade = {
+    id: 182, pool: 'toggle', bought: 1, getPrice: () => 10, canBuy: () => true,
+    displayFuncWhenOwned: nativeDisplay, desc: 'Season details.'
+  };
+  for (const [key, [name, displayName, progress]] of Object.entries(seasons)) {
+    upgrade.name = name; upgrade.season = key; Game.season = key;
+    crate.setAttribute('aria-labelledby', reader.id); reader.textContent = 'Old game label';
+    MOD.populateUpgradeLabel(upgrade);
+    const label = crate.getAttribute('aria-label');
+    eq(key + ': one complete season summary', label,
+      name + '. Purchased. (Active season: ' + displayName + ' (23h 54m 20s remaining). Click to cancel season).' +
+      (progress ? ' ' + progress + '.' : ''));
+    eq(key + ': countdown appears once', (label.match(/remaining/g) || []).length, 1);
+    eq(key + ': cancel action appears once', (label.match(/cancel season/g) || []).length, 1);
+    eq(key + ': native description remains available separately',
+      l('a11y-upgrade-info-182').textContent,
+      'Time remaining: 23h 54m 20s (Click again to cancel season) Season details. Triggers ' +
+      displayName + ' season for 24 hours.' + (progress ? ' ' + progress + '.' : ''));
+    eq(key + ': stale game label no longer names the button', crate.getAttribute('aria-labelledby'), null);
+    eq(key + ': button stays keyboard focusable', crate.getAttribute('role') + '/' + crate.getAttribute('tabindex'), 'button/0');
+  }
+  upgrade.name = 'Festive biscuit'; upgrade.season = 'christmas'; Game.season = 'christmas';
+  crate.focus(); clearSpoken();
+  MOD.populateUpgradeLabel(upgrade);
+  Game.seasonT = 2581770;
+  MOD.populateUpgradeLabel(upgrade);
+  ok('countdown follows the current game time without an extra second',
+    crate.getAttribute('aria-label').includes('(23h 54m 19s remaining)'));
+  ok('refresh leaves keyboard focus in place', DOC._focused === crate);
+  eq('refresh does not submit a live announcement', spoken.length, 0);
+  eq('refresh installs only one keydown listener', crate._listeners.keydown.length, 1);
+
+  eternal = true;
+  MOD.populateUpgradeLabel(upgrade);
+  ok('Eternal seasons reports forever instead of a countdown',
+    crate.getAttribute('aria-label').includes('(forever remaining)') && !crate.getAttribute('aria-label').includes('23h'));
+  eternal = false;
+  Game.seasonT = -1;
+  MOD.populateUpgradeLabel(upgrade);
+  ok('a natural season without a timer retains its active name and action',
+    crate.getAttribute('aria-label').includes('(Active season: Christmas. Click to cancel season).'));
+
+  upgrade.bought = 0; Game.season = '';
+  MOD.populateUpgradeLabel(upgrade);
+  eq('inactive season keeps price, trigger and collection progress', crate.getAttribute('aria-label'),
+    "Festive biscuit. Cost: 10. Affordable. (Triggers Christmas season). 14/14 Santa's gifts, 3/7 reindeer cookies unlocked.");
+  Game.cookies = 0;
+  MOD.populateUpgradeLabel(upgrade);
+  ok('unaffordable season keeps its native cost state', crate.getAttribute('aria-label').includes('Cannot afford.'));
+
+  delete upgrade.season; upgrade.name = 'Other owned upgrade'; upgrade.pool = ''; upgrade.bought = 1;
+  upgrade.displayFuncWhenOwned = () => '<b>Other owned effect</b>';
+  MOD.populateUpgradeLabel(upgrade);
+  eq('non-season owned upgrade retains its native display text', crate.getAttribute('aria-label'),
+    'Other owned upgrade. Purchased. Other owned effect.');
   DOC.body.children = []; DOC._focused = null;
 });
 console.log('\n=============================================');

@@ -22,7 +22,7 @@ Subscribe on the Steam Workshop:
 
 Steam downloads it and the game picks it up on the next launch. Open Options, then Mods, and check
 that **Screen Reader Accessibility Enhancements** is enabled. The mod announces
-"Screen Reader Accessibility mod version 14.1 loaded." when it starts.
+"Screen Reader Accessibility mod version 14.1.1 loaded." when it starts.
 
 ### Remove the older accessibility mod first
 
@@ -289,7 +289,7 @@ root:
 node tests/harness.js
 ```
 
-It reports 231 passing tests against the current `main.js`. Point it at another copy with the
+It reports 270 passing tests against the current `main.js`. Point it at another copy with the
 `CC_MAIN` environment variable to compare behaviour:
 
 ```bash
@@ -298,14 +298,15 @@ CC_MAIN=/path/to/other/main.js node tests/harness.js
 
 The harness checks the logic, not the screen reader experience. The v14.1 Stock Market fix has been
 confirmed in game with NVDA. The Cursor and Pantheon changes passed isolated browser checks, but
-their in-game NVDA checks are still pending.
+their in-game NVDA checks are still pending. The v14.1.1 season label fix also awaits an in-game
+NVDA check.
 
 ## Credits
 
 - Original mod: [FioraXena](https://github.com/FioraXena/Cookie-Clicker-Enhanced-NVDA-Accessibility-Steam-Only-),
   version 12.
 - Versions 13.0 to 13.8: [Amsel](https://github.com/Amsel142857/Cookie-Clicker-Access).
-- This fork, versions 13.9 to 14.1:
+- This fork, versions 13.9 to 14.1.1:
   [VIPPotato](https://github.com/VIPPotato/Cookie-Clicker-Access-frozen-cookies-fix).
 - Tampermonkey userscript port: [guilevi](https://github.com/guilevi).
 - Cookie Clicker itself: Orteil and DashNet.
