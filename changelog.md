@@ -2,11 +2,11 @@
 
 ## Version 14.1.1
 
-- Fixed active season buttons repeating their countdown and cancellation instruction. Seasonal collection counts are still included.
+- Season buttons contain the price or active state, duration, collection progress and season switch count without repeating those details in the text below.
+- The game's flavor descriptions remain readable below each season button, without literal HTML tags.
 - The countdown uses the same time as the game. Eternal seasons reports forever instead of a countdown.
-- Season descriptions no longer repeat the effect or switch count, and no longer expose HTML tags.
 
-Verification: 309 automated checks and 59 isolated browser checks pass. The browser checks use the installed game's season functions and descriptions. In-game NVDA verification of this patch is still pending.
+Verification: 338 automated checks and 102 isolated browser checks pass. The revised buttons have a passing player report. The restored flavor descriptions passed browser checks; their in-game screen reader check is still pending.
 
 ## Version 14.1
 

@@ -289,7 +289,7 @@ root:
 node tests/harness.js
 ```
 
-It reports 309 passing tests against the current `main.js`. Point it at another copy with the
+It reports 338 passing checks against the current `main.js`. Point it at another copy with the
 `CC_MAIN` environment variable to compare behaviour:
 
 ```bash
@@ -298,8 +298,9 @@ CC_MAIN=/path/to/other/main.js node tests/harness.js
 
 The harness checks the logic, not the screen reader experience. The v14.1 Stock Market fix has been
 confirmed in game with NVDA. The Cursor and Pantheon changes passed isolated browser checks, but
-their in-game NVDA checks are still pending. The v14.1.1 season label fix also awaits an in-game
-NVDA check.
+their in-game NVDA checks are still pending. The revised v14.1.1 season buttons have a passing
+player report. The restored flavor descriptions passed browser checks; their in-game screen
+reader check is still pending.
 
 ## Credits
 

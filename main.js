@@ -5347,7 +5347,7 @@ Game.registerMod("screen reader accessibility", {
 		var t = n + '. ';
 		if (u.bought) {
 			t += 'Purchased.';
-			// Season countdown and cancellation are described once below.
+			// Season state is composed by the season-specific label below.
 			if (!u.season && typeof u.displayFuncWhenOwned === 'function') {
 				try {
 					var df = MOD.stripHtml(u.displayFuncWhenOwned());
@@ -5373,11 +5373,18 @@ Game.registerMod("screen reader accessibility", {
 				}
 				t += ' (Active season: ' + seasonName + timeRem + '. Click to cancel season).';
 			} else {
-				t += ' (Triggers ' + seasonName + ' season).';
+				// The static description has the duration and purchase warnings.
+				// descFunc also contains collection counts, which we supply once below.
+				var seasonEffect = MOD.stripHtml((u.ddesc || u.desc || '').split(/<q\b/i)[0]);
+				t += ' ' + (seasonEffect || 'Triggers ' + seasonName + ' season for 24 hours.');
 			}
 			var dropSummary = MOD.getSeasonDropSummary(u.season);
 			if (dropSummary) {
 				t += ' ' + dropSummary + '.';
+			}
+			if (typeof Game.saySeasonSwitchUses === 'function') {
+				var switchUses = MOD.stripHtml(Game.saySeasonSwitchUses());
+				if (switchUses) t += ' ' + switchUses;
 			}
 		} else if (u.pool === 'toggle') {
 			var effect = MOD.getToggleUpgradeEffect(u);
@@ -5415,7 +5422,7 @@ Game.registerMod("screen reader accessibility", {
 		// Clear ariaReader label so game's crateTooltip text can't stick
 		var a = l('ariaReader-upgrade-' + u.id);
 		if (a) a.innerHTML = '';
-		// Also add a visible/focusable text element below the upgrade
+		// Keep descriptive text readable separately from the button's essentials.
 		MOD.ensureUpgradeInfoText(u);
 	},
 	ensureUpgradeInfoText: function(u) {
@@ -5438,7 +5445,11 @@ Game.registerMod("screen reader accessibility", {
 		// Build the info text - cost is already in the button aria-label
 		var infoText = '';
 		var descRaw = '';
-		if (typeof u.descFunc === 'function') {
+		if (u.season) {
+			// Native q text is the flavor description; counts and actions stay on the button.
+			var flavor = (u.ddesc || u.desc || '').match(/<q\b[^>]*>([\s\S]*?)<\/q\s*>/i);
+			descRaw = flavor ? flavor[1] : '';
+		} else if (typeof u.descFunc === 'function') {
 			try {
 				descRaw = u.descFunc('store');
 			} catch(e) {
@@ -5447,24 +5458,26 @@ Game.registerMod("screen reader accessibility", {
 		} else {
 			descRaw = u.desc || '';
 		}
-		if (u.bought && typeof u.displayFuncWhenOwned === 'function') {
+		if (!u.season && u.bought && typeof u.displayFuncWhenOwned === 'function') {
 			try {
 				var df = u.displayFuncWhenOwned();
 				if (df) descRaw = df + '<br>' + descRaw;
 			} catch(e) {}
 		}
 		var desc = MOD.stripHtml(descRaw);
+		if (u.season && !desc) {
+			if (existingText) existingText.remove();
+			return;
+		}
 
-		// Native season descriptions already include the effect and switch count.
-		// Use the season summary only when no native description is available.
-		if (u.pool === 'toggle' && (!u.season || !desc)) {
+		if (!u.season && u.pool === 'toggle') {
 			var toggleEffect = MOD.getToggleUpgradeEffect(u);
 			if (toggleEffect && !desc.includes(toggleEffect)) {
 				desc = (desc ? desc + ' ' : '') + toggleEffect;
 			}
 		}
 
-		if (u.canBuy()) {
+		if (u.season || u.canBuy()) {
 			infoText = desc;
 		} else {
 			var timeStr = MOD.getTimeUntilAfford(u.getPrice());
@@ -5478,6 +5491,7 @@ Game.registerMod("screen reader accessibility", {
 			MOD.setTextIfChanged(existingText, infoText);
 			existingText.removeAttribute('aria-label');
 			existingText.removeAttribute('role');
+			if (u.season) MOD.setAttributeIfChanged(existingText, 'tabindex', '0');
 		} else {
 			// Create info text element (like Grimoire effect text - focusable but not a button)
 			var infoDiv = document.createElement('div');
@@ -5745,16 +5759,6 @@ Game.registerMod("screen reader accessibility", {
 		}
 		if (name === 'jukebox') {
 			return 'Opens the music player menu to select and play music tracks.';
-		}
-		if (u.season) {
-			var sObj = Game.seasons[u.season];
-			var sName = sObj ? sObj.name : u.season;
-			var switchUses = (typeof Game.saySeasonSwitchUses === 'function') ? Game.saySeasonSwitchUses() : '';
-			var dropInfo = MOD.getSeasonDropSummary(u.season);
-			var res = 'Triggers ' + sName + ' season for 24 hours.';
-			if (dropInfo) res += ' ' + dropInfo + '.';
-			if (switchUses) res += ' ' + switchUses;
-			return MOD.stripHtml(res);
 		}
 		// Default: use the upgrade's description
 		return MOD.stripHtml(u.desc || '');
