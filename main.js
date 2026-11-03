@@ -5455,8 +5455,9 @@ Game.registerMod("screen reader accessibility", {
 		}
 		var desc = MOD.stripHtml(descRaw);
 
-		// If this is a toggle upgrade, append its toggle effect if not already included
-		if (u.pool === 'toggle') {
+		// Native season descriptions already include the effect and switch count.
+		// Use the season summary only when no native description is available.
+		if (u.pool === 'toggle' && (!u.season || !desc)) {
 			var toggleEffect = MOD.getToggleUpgradeEffect(u);
 			if (toggleEffect && !desc.includes(toggleEffect)) {
 				desc = (desc ? desc + ' ' : '') + toggleEffect;
@@ -5753,7 +5754,7 @@ Game.registerMod("screen reader accessibility", {
 			var res = 'Triggers ' + sName + ' season for 24 hours.';
 			if (dropInfo) res += ' ' + dropInfo + '.';
 			if (switchUses) res += ' ' + switchUses;
-			return res;
+			return MOD.stripHtml(res);
 		}
 		// Default: use the upgrade's description
 		return MOD.stripHtml(u.desc || '');

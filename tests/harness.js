@@ -1093,8 +1093,7 @@ section("11. Season switch labels describe the active season once", function () 
     eq(key + ': cancel action appears once', (label.match(/cancel season/g) || []).length, 1);
     eq(key + ': native description remains available separately',
       l('a11y-upgrade-info-182').textContent,
-      'Time remaining: 23h 54m 20s (Click again to cancel season) Season details. Triggers ' +
-      displayName + ' season for 24 hours.' + (progress ? ' ' + progress + '.' : ''));
+      'Time remaining: 23h 54m 20s (Click again to cancel season) Season details.');
     eq(key + ': stale game label no longer names the button', crate.getAttribute('aria-labelledby'), null);
     eq(key + ': button stays keyboard focusable', crate.getAttribute('role') + '/' + crate.getAttribute('tabindex'), 'button/0');
   }
@@ -1132,6 +1131,58 @@ section("11. Season switch labels describe the active season once", function () 
   MOD.populateUpgradeLabel(upgrade);
   eq('non-season owned upgrade retains its native display text', crate.getAttribute('aria-label'),
     'Other owned upgrade. Purchased. Other owned effect.');
+  DOC.body.children = []; DOC._focused = null;
+});
+section("12. Season descriptions keep native details without a second summary", function () {
+  need(['ensureUpgradeInfoText', 'getToggleUpgradeEffect']);
+  DOC.body.children = []; DOC._focused = null;
+  const store = new El('div'); store.id = 'toggleUpgrades'; DOC.body.appendChild(store);
+  const crate = new El('div'); crate.setAttribute('data-id', '183'); store.appendChild(crate);
+  Game.Has = () => false;
+  Game.saySeasonSwitchUses = () => "You've switched seasons <b>twice</b> this ascension.";
+  const upgrade = { id: 183, pool: 'toggle', bought: 0, getPrice: () => 10, canBuy: () => true };
+  const seasonNames = { christmas: 'Christmas', valentines: "Valentine's day", easter: 'Easter', halloween: 'Halloween', fools: 'Business day' };
+  const warning = 'Triggering another season will cancel this one. Cost scales with unbuffed CpS and increases with every season switch.';
+  const flavor = 'Business. Serious business. This is absolutely all of your business.';
+  for (const [season, displayName] of Object.entries(seasonNames)) {
+    upgrade.season = season; upgrade.name = season === 'fools' ? "Fool's biscuit" : season + ' biscuit';
+    Game.seasons[season] = { name: displayName };
+    upgrade.desc = 'Triggers ' + displayName + ' season for the next 24 hours. ' + warning;
+    upgrade.descFunc = function () { return '<div>' + Game.saySeasonSwitchUses() + '</div>' + this.desc + ' <q>' + flavor + '</q>'; };
+    const expected = "You've switched seasons twice this ascension. " + upgrade.desc + ' ' + flavor;
+    MOD.ensureUpgradeInfoText(upgrade);
+    const info = l('a11y-upgrade-info-183');
+    eq(season + ': native description appears exactly once', info.textContent, expected);
+    eq(season + ': one duration description', (info.textContent.match(/24 hours/g) || []).length, 1);
+    eq(season + ': one switch count', (info.textContent.match(/switched seasons/g) || []).length, 1);
+    ok(season + ': no raw HTML in info text', !/<[^>]+>/.test(info.textContent));
+    ok(season + ': toggle fallback itself is plain text', !/<[^>]+>/.test(MOD.getToggleUpgradeEffect(upgrade)));
+    info.focus(); clearSpoken();
+    MOD.ensureUpgradeInfoText(upgrade); MOD.ensureUpgradeInfoText(upgrade);
+    ok(season + ': refresh retains the focused info node', DOC._focused === info && l(info.id) === info);
+    eq(season + ': refresh submits no announcement', spoken.length, 0);
+  }
+  upgrade.season = 'fools'; upgrade.name = "Fool's biscuit";
+  upgrade.desc = ''; delete upgrade.descFunc;
+  MOD.ensureUpgradeInfoText(upgrade);
+  eq('missing native description keeps a clean fallback', l('a11y-upgrade-info-183').textContent,
+    "Triggers Business day season for 24 hours. You've switched seasons twice this ascension.");
+  upgrade.desc = 'Native fallback description.';
+  upgrade.descFunc = () => { throw new Error('Unavailable dynamic description'); };
+  MOD.ensureUpgradeInfoText(upgrade);
+  eq('throwing descFunc preserves the native static description without a duplicate',
+    l('a11y-upgrade-info-183').textContent, 'Native fallback description.');
+  delete upgrade.descFunc;
+  upgrade.bought = 1;
+  upgrade.displayFuncWhenOwned = () => '<b>Time remaining: 20 minutes</b>';
+  MOD.ensureUpgradeInfoText(upgrade);
+  eq('owned season retains native countdown and description once',
+    l('a11y-upgrade-info-183').textContent, 'Time remaining: 20 minutes Native fallback description.');
+  delete upgrade.season; upgrade.bought = 0; upgrade.name = 'Golden switch [off]';
+  delete upgrade.displayFuncWhenOwned;
+  MOD.ensureUpgradeInfoText(upgrade);
+  eq('other toggles still receive their accessible effect', l('a11y-upgrade-info-183').textContent,
+    'Native fallback description. Toggle: Turn ON to gain +50% CpS while Golden Cookies stop spawning.');
   DOC.body.children = []; DOC._focused = null;
 });
 console.log('\n=============================================');

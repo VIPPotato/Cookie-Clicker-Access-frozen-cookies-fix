@@ -289,7 +289,7 @@ root:
 node tests/harness.js
 ```
 
-It reports 270 passing tests against the current `main.js`. Point it at another copy with the
+It reports 309 passing tests against the current `main.js`. Point it at another copy with the
 `CC_MAIN` environment variable to compare behaviour:
 
 ```bash

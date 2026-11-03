@@ -4,8 +4,9 @@
 
 - Fixed active season buttons repeating their countdown and cancellation instruction. Seasonal collection counts are still included.
 - The countdown uses the same time as the game. Eternal seasons reports forever instead of a countdown.
+- Season descriptions no longer repeat the effect or switch count, and no longer expose HTML tags.
 
-Verification: 270 automated checks and 29 isolated browser checks pass. The browser checks use the installed game's season functions. In-game NVDA verification of this patch is still pending.
+Verification: 309 automated checks and 59 isolated browser checks pass. The browser checks use the installed game's season functions and descriptions. In-game NVDA verification of this patch is still pending.
 
 ## Version 14.1
 
