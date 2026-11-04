@@ -1,5 +1,21 @@
 # Cookie Clicker Access - Changelog
 
+## Version 15.0
+
+2026-11-04
+
+Changes since 14.1.1:
+
+- Added screen reader and keyboard support for Grandpa's Greenhouse on Steam, including settings, breeding targets and creating or editing garden layouts.
+- Made Frozen Cookies' menu, settings and number-entry dialogs accessible on Steam.
+- Added readable Frozen Cookies infobox information and recorded stats. Refresh the text when you want, without constant announcements.
+- Blocked Frozen Cookies' A, B, C, E, R, S and W shortcuts so they do not interfere with screen reader navigation. Use its menu controls instead. Typing and Ctrl with S still work.
+- Support starts automatically when either mod is enabled. Their automation settings are left unchanged.
+
+These additions are Steam-only. The web version keeps its existing accessibility features.
+
+Note: Frozen Cookies' optional 100% Consistency Combo can conflict with Greenhouse garden plans. It is off by default.
+
 ## Version 14.1.1
 
 - Season buttons contain the price or active state, duration, collection progress and season switch count without repeating those details in the text below.

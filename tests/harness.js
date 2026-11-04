@@ -61,8 +61,10 @@ class El {
   }
   setAttribute(k, v) { this.attrs[k] = String(v); if (k === 'id') this.id = String(v); }
   getAttribute(k) { return Object.prototype.hasOwnProperty.call(this.attrs, k) ? this.attrs[k] : null; }
-  removeAttribute(k) { delete this.attrs[k]; }
+  removeAttribute(k) { delete this.attrs[k]; if (k === 'id') this.id = ''; }
   hasAttribute(k) { return Object.prototype.hasOwnProperty.call(this.attrs, k); }
+  contains(el) { return el === this || this._all().includes(el); }
+  get isConnected() { return this === DOC.body || DOC.body.contains(this); }
   appendChild(c) { if (c.parentNode) c.parentNode.removeChild(c); c.parentNode = this; this.children.push(c); return c; }
   removeChild(c) { this.children = this.children.filter(x => x !== c); c.parentNode = null; return c; }
   remove() { if (this.parentNode) this.parentNode.removeChild(this); }
@@ -102,6 +104,7 @@ class El {
   set innerHTML(v) { this._html = String(v); if (v === '') this.children = []; }
   get innerHTML() { return this._html; }
   addEventListener(t, fn) { (this._listeners[t] = this._listeners[t] || []).push(fn); }
+  removeEventListener(t, fn) { this._listeners[t] = (this._listeners[t] || []).filter(listener => listener !== fn); }
   dispatch(t, ev) { (this._listeners[t] || []).forEach(fn => fn(ev || {})); }
   click() { this.dispatch('click', { stopPropagation() {}, preventDefault() {}, target: this }); }
   focus() { DOC._focused = this; }
@@ -163,6 +166,7 @@ function matchAll(root, sel) {
 
 const DOC = {
   _focused: null,
+  documentElement: new El('html'),
   body: new El('body'),
   createElement: t => new El(t),
   getElementById: id => DOC.body._all().find(e => e.id === id) || null,
@@ -175,6 +179,7 @@ const DOC = {
 // ---------- Globals main.js expects ----------
 global.document = DOC;
 global.window = { addEventListener() {} };
+global.App = { mods: {} }; // explicit synthetic Steam host, not a live lookup
 global.l = id => DOC.getElementById(id);
 global.loc = s => s;
 global.Beautify = n => String(n);
@@ -205,6 +210,7 @@ function runTimers(max = 50) {
 
 let MOD = null;
 global.Game = {
+  ready: true,
   registerMod(name, obj) { MOD = obj; },
   registerHook() {},
   prefs: { screenreader: 1 },
@@ -1219,6 +1225,170 @@ section("12. Season descriptions remain readable without repeating button essent
     'Native fallback description. Toggle: Turn ON to gain +50% CpS while Golden Cookies stop spawning.');
   DOC.body.children = []; DOC._focused = null;
 });
+if (process.env.CC_WEB !== '1') {
+section("13. Automatic Greenhouse adapter, independent and presentation only", function () {
+  need(['updateGreenhouseAccessibility', 'clearGreenhouseAccessibility', 'initGreenhouseAccessibility']);
+  DOC.body.children = []; DOC._focused = null; clearSpoken();
+  const oldMods = Game.mods, oldFarm = Game.Objects.Farm;
+  const settings = { mode: 'tend', tab: 'settings', bankNew: true, target: '' };
+  const greenhouse = { init: 0, version: '1.5', getSettings: () => settings,
+    getHelp: key => key === 'settings' ? 'Native settings help.' : '' };
+  const farm = { onMinigame: true, minigameLoaded: true, minigame: {} };
+  function frame() {
+    const root = new El('div'); root.id = 'grandpasGreenhousePanel'; DOC.body.appendChild(root);
+    const title = new El('span'); title.className = 'ggTitle'; title.textContent = "Grandpa's Greenhouse"; root.appendChild(title);
+    for (const key of ['off', 'tend', 'breed', 'boost', 'plant', 'unlocks']) {
+      const button = new El('div'); button.id = 'ggMode-' + key; button.className = 'ggBtn';
+      button.setAttribute('data-act', 'mode'); button.setAttribute('data-mode', key);
+      button.setAttribute('data-tip', 'Native ' + key + ' help.'); button.textContent = key;
+      root.appendChild(button);
+    }
+    const tab = new El('div'); tab.id = 'ggTab-settings'; tab.className = 'ggBtn';
+    tab.setAttribute('data-act', 'tab'); tab.setAttribute('data-tab', 'settings'); tab.textContent = 'Settings'; root.appendChild(tab);
+    const pane = new El('div'); pane.id = 'ggTabSettings'; root.appendChild(pane);
+    const heading = new El('div'); heading.className = 'ggHead'; heading.textContent = 'Settings';
+    heading.setAttribute('data-help', 'settings'); pane.appendChild(heading);
+    const group = new El('div'); group.className = 'ggSubHead'; group.textContent = 'Harvesting'; pane.appendChild(group);
+    const item = new El('div'); item.className = 'ggSetItem'; pane.appendChild(item);
+    const input = new El('input'); input.id = 'ggSet-bankNew'; input.type = 'checkbox'; input.checked = true; item.appendChild(input);
+    const help = new El('div'); help.className = 'ggSetHelp'; help.textContent = 'Native harvest help.'; item.appendChild(help);
+    const timer = new El('div'); timer.id = 'ggStatus'; timer.textContent = 'Next step in 4m 3s'; root.appendChild(timer);
+    return root;
+  }
+  try {
+    Game.mods = {}; Game.Objects.Farm = farm; Game.onMenu = ''; Game.promptOn = 0;
+
+    const root = frame(), tend = l('ggMode-tend'), input = l('ggSet-bankNew');
+    MOD.updateGreenhouseAccessibility();
+    eq('unregistered lookalike panel is untouched', tend.getAttribute('role'), null);
+    Game.mods['grandpas greenhouse'] = greenhouse; greenhouse.init = function () {};
+    MOD.updateGreenhouseAccessibility();
+    eq('registered but uninitialized mod is untouched', tend.getAttribute('role'), null);
+    greenhouse.init = 0;
+    const before = JSON.stringify(settings);
+    tend.focus(); MOD.updateGreenhouseAccessibility(); MOD.updateGreenhouseAccessibility();
+    eq('native mode control is a button, not an automatic tab', tend.getAttribute('role'), 'button');
+    eq('current automation mode is pressed', tend.getAttribute('aria-pressed'), 'true');
+    eq('other automation mode is not pressed', l('ggMode-off').getAttribute('aria-pressed'), 'false');
+    eq('settings page exposes its independent selected state', l('ggTab-settings').getAttribute('aria-pressed'), 'true');
+    eq('panel title is a heading', root.querySelector('.ggTitle').getAttribute('aria-level'), '3');
+    eq('settings heading is below the panel heading', root.querySelector('.ggHead').getAttribute('aria-level'), '4');
+    eq('settings group is below its page heading', root.querySelector('.ggSubHead').getAttribute('aria-level'), '5');
+    eq('native checkbox is not replaced by a fake button', input.getAttribute('role'), null);
+    eq('native checkbox help is associated', l(input.getAttribute('aria-describedby'))?.textContent, 'Native harvest help.');
+    eq('mode tooltip is readable help', l(tend.getAttribute('aria-describedby'))?.textContent, 'Native tend help.');
+    eq('countdown has no live role', l('ggStatus').getAttribute('role'), null);
+    eq('countdown has no live announcements', l('ggStatus').getAttribute('aria-live'), null);
+    eq('enhancement does not change automation or page settings', JSON.stringify(settings), before);
+    ok('enhancement keeps focus on its actual host', DOC._focused === tend);
+    eq('refresh submits no announcements', spoken.length, 0);
+    eq('repeated passes install one keyboard listener', root._listeners.keydown.length, 1);
+    let clicks = 0;
+    tend.addEventListener('click', () => { clicks++; });
+    function key(value, extra) {
+      const ev = { key: value, target: tend, preventDefault() {}, stopPropagation() {}, ...extra };
+      root.dispatch('keydown', ev);
+    }
+    key('Enter'); key(' ');
+    eq('Enter and Space each invoke the native click once', clicks, 2);
+    key('Enter', { repeat: true }); key(' ', { ctrlKey: true });
+    eq('held and modified keys do not activate controls', clicks, 2);
+    Game.promptOn = 1; key('Enter'); Game.promptOn = 0;
+    Game.onMenu = 'stats'; key('Enter'); Game.onMenu = '';
+    farm.onMinigame = false; key('Enter'); farm.onMinigame = true;
+    eq('covered and closed panels refuse adapted activation', clicks, 2);
+    tend.setAttribute('aria-disabled', 'true'); key('Enter'); tend.removeAttribute('aria-disabled');
+    tend.style.display = 'none'; key('Enter'); tend.style.display = '';
+    eq('disabled and hidden controls refuse adapted activation', clicks, 2);
+    settings.mode = 'off'; MOD.updateGreenhouseAccessibility();
+    eq('external mode changes are read live', tend.getAttribute('aria-pressed'), 'false');
+    eq('external mode change selects the other native button', l('ggMode-off').getAttribute('aria-pressed'), 'true');
+    tend.focus(); root.dispatch('focusin', { target: tend });
+    root.remove(); DOC._focused = DOC.body;
+    const replacement = frame(); MOD.updateGreenhouseAccessibility();
+    ok('panel replacement reattaches to the current instance', MOD._greenhouseAccessibility.root === replacement);
+    ok('removed-panel keyboard listeners are retired', root._listeners.keydown.length === 0);
+    ok('panel replacement restores the same focused control', DOC._focused === l('ggMode-tend'));
+    const external = new El('button'); DOC.body.appendChild(external); external.focus();
+    MOD.updateGreenhouseAccessibility();
+    ok('refresh never steals unrelated focus', DOC._focused === external);
+    App.mods['grandpas greenhouse'] = { disabled: true };
+    MOD.updateGreenhouseAccessibility();
+    eq('disabled native mod restores the original mode role', l('ggMode-tend').getAttribute('role'), null);
+    eq('disabled native mod removes owned descriptions', l('ggMode-tend').getAttribute('aria-describedby'), null);
+    eq('disabled native mod restores existing help IDs', replacement.querySelector('.ggSetHelp').id, '');
+    eq('disabled native mod removes all owned keyboard listeners', replacement._listeners.keydown.length, 0);
+    App.mods['grandpas greenhouse'].disabled = false;
+    MOD.load('{"greenhouseAccessibilityEnabled":false}');
+    MOD.updateGreenhouseAccessibility();
+    ok('legacy false cannot opt out of automatic native support', !!MOD._greenhouseAccessibility);
+    eq('no adapter enable preference is saved', MOD.save(), '');
+    ok('no support-toggle property remains', !('greenhouseAccessibilityEnabled' in MOD));
+    MOD.load('');
+    ok('empty legacy data leaves automatic support active', !!MOD._greenhouseAccessibility);
+    MOD.load('{broken');
+    ok('malformed legacy data cannot disable base access or throw', !!MOD._greenhouseAccessibility);
+    MOD.clearGreenhouseAccessibility();
+    delete Game.mods['grandpas greenhouse']; MOD.updateGreenhouseAccessibility();
+    eq('absent mod leaves no adapter state', MOD._greenhouseAccessibility, null);
+  } finally {
+    MOD.clearGreenhouseAccessibility(); delete App.mods['grandpas greenhouse'];
+    Game.mods = oldMods; Game.Objects.Farm = oldFarm;
+    Game.onMenu = ''; Game.promptOn = 0; DOC.body.children = []; DOC._focused = null;
+  }
+});
+section('14. Frozen Cookies automatic discovery without preferences', function () {
+  need(['updateFrozenCookiesAccessibility', 'clearFrozenCookiesAccessibility']);
+  const oldMods = Game.mods, oldReady = Game.ready, oldFrozen = window.FrozenCookies;
+  const oldFailure = MOD._frozenCookiesFailure;
+  DOC.body.children = []; clearSpoken();
+  try {
+    Game.ready = true; Game.mods = {};
+    const menu = new El('div'); menu.id = 'menu'; DOC.body.appendChild(menu);
+    const opener = new El('div'); opener.id = 'fcButton'; DOC.body.appendChild(opener);
+
+    window.FrozenCookies = {version:'2.052.8',branch:'erb-'};
+    MOD.updateFrozenCookiesAccessibility();
+    eq('an early Frozen global without registration is untouched', opener.getAttribute('role'), null);
+    Game.mods.frozen_cookies = {init:function () {}};
+    MOD.updateFrozenCookiesAccessibility();
+    eq('unfinished Frozen registration is untouched', MOD._frozenCookiesAccessibility, null);
+    Game.mods.frozen_cookies.init = 0;
+    MOD.updateFrozenCookiesAccessibility();
+    eq('missing initialized native state stays in discovery', MOD._frozenCookiesAccessibility, null);
+    eq('discovery does not announce early readiness as failure', spoken.length, 0);
+    window.FrozenCookies.version = '9.9';
+    const priorError = console.error; console.error = () => {};
+    try { MOD.updateFrozenCookiesAccessibility(); MOD.updateFrozenCookiesAccessibility(); }
+    finally { console.error = priorError; }
+    eq('unsupported Frozen version gives one local warning', spoken.length, 1);
+    eq('unsupported Frozen version leaves the opener untouched', opener.getAttribute('role'), null);
+    MOD.load('{"greenhouseAccessibilityEnabled":false,"frozenCookiesAccessibilityEnabled":true}');
+    ok('legacy Greenhouse opt-out is ignored', !('greenhouseAccessibilityEnabled' in MOD));
+    MOD.load('{"greenhouseAccessibilityEnabled":true,"frozenCookiesAccessibilityEnabled":false}');
+    ok('legacy Frozen opt-out is ignored', !('frozenCookiesAccessibilityEnabled' in MOD));
+    eq('no saved support choices remain', MOD.save(), '');
+    MOD.load('{"greenhouseAccessibilityEnabled":false}');
+    eq('older envelopes are retired on the next synthetic save', MOD.save(), '');
+    MOD.load('');
+    ok('support-toggle UI methods are removed', !MOD.addGreenhouseAccessibilityOption && !MOD.addFrozenCookiesAccessibilityOption);
+  } finally {
+    MOD.clearFrozenCookiesAccessibility(); MOD.load('');
+    if (typeof MOD.clearFrozenCookiesShortcutShield === 'function') MOD.clearFrozenCookiesShortcutShield();
+    MOD._frozenCookiesFailure = oldFailure;
+    Game.mods = oldMods; Game.ready = oldReady; window.FrozenCookies = oldFrozen;
+    DOC.body.children = []; DOC._focused = null;
+  }
+});
+} else {
+section('13. Generated web payload has only the base mod', function () {
+  for (const method of ['initGreenhouseAccessibility', 'updateGreenhouseAccessibility', 'initFrozenCookiesAccessibility',
+    'updateFrozenCookiesAccessibility', 'updateFrozenCookiesShortcutShield', 'frozenCookiesGraphOpen', 'steamOptionalModReady']) {
+    eq(method + ' is physically absent', typeof MOD[method], 'undefined');
+  }
+  eq('base save has no optional support state', MOD.save(), '');
+});
+}
 console.log('\n=============================================');
 console.log('PASS ' + pass + '   FAIL ' + fail);
 if (fail) { console.log('\nFailures:'); failures.forEach(f => console.log('  - ' + f)); }

@@ -95,7 +95,9 @@ Game.registerMod("screen reader accessibility", {
 			}
 		}, false); // false = bubble phase — fires after element handlers, before window handlers
 		// Announce when Ctrl+S saves the game
-		document.addEventListener('keydown', function(e) {
+		// Keep feedback below document-level optional shortcut listeners. A narrow
+		// Steam shield can stop bubbling there without losing this base command.
+		document.documentElement.addEventListener('keydown', function(e) {
 			if (e.ctrlKey && e.key === 's') {
 				// Forced: a direct user action, so it must be heard even if a
 				// prompt happens to be open.
@@ -105,6 +107,11 @@ Game.registerMod("screen reader accessibility", {
 		// Escape closes open panels (menus, minigames, dragon, santa, milk selector)
 		document.addEventListener('keydown', function(e) {
 			if (e.key === 'Escape') {
+				if (e.defaultPrevented) return;
+				// @steam-only begin
+				// A jQuery UI graph dialog owns Escape above its underlying menu.
+				if (MOD._frozenCookiesAccessibility && MOD.frozenCookiesGraphOpen()) return;
+				// @steam-only end
 				// Check prompts first (confirmations, dialogs)
 				if (Game.promptOn && !Game.promptNoClose) {
 					Game.ClosePrompt();
@@ -116,6 +123,9 @@ Game.registerMod("screen reader accessibility", {
 				if (Game.onMenu !== '') {
 					var names = {stats: 'Statistics', prefs: 'Options', log: 'Info'};
 					var buttons = {stats: 'statsButton', prefs: 'prefsButton', log: 'logButton'};
+					// @steam-only begin
+					names.fc_menu = 'Frozen Cookies'; buttons.fc_menu = 'fcButton';
+					// @steam-only end
 					var menuName = names[Game.onMenu] || Game.onMenu;
 					var btnId = buttons[Game.onMenu];
 					Game.ShowMenu(Game.onMenu); // pass current menu to toggle it off
@@ -219,12 +229,21 @@ Game.registerMod("screen reader accessibility", {
 		// Wrap Game.ShowMenu to announce menu open/close
 		var origShowMenu = Game.ShowMenu;
 		Game.ShowMenu = function(what) {
-			var wasClosed = Game.onMenu === '';
-			origShowMenu.apply(this, arguments);
+			var changing = MOD._menuChanging, result;
+			MOD._menuChanging = true;
+			try { result = origShowMenu.apply(this, arguments); }
+			finally { MOD._menuChanging = changing; }
+			// @steam-only begin
+			MOD.updateFrozenCookiesAccessibility();
+			// @steam-only end
 			if (Game.onMenu !== '') {
 				var names = {stats: 'Statistics', prefs: 'Options', log: 'Info'};
+				// @steam-only begin
+				names.fc_menu = 'Frozen Cookies';
+				// @steam-only end
 				MOD.announce((names[Game.onMenu] || Game.onMenu) + ' menu opened.');
 			}
+			return result;
 		};
 		// Wrap Game.Prompt to make prompts accessible to screen readers
 		var origPrompt = Game.Prompt;
@@ -491,7 +510,7 @@ Game.registerMod("screen reader accessibility", {
 		// Game.UpdateMenu() rebuilds menu innerHTML every 5 seconds, destroying NVDA's focus position
 		var origUpdateMenu = Game.UpdateMenu;
 		Game.UpdateMenu = function() {
-			if (Game.onMenu === 'stats' || Game.onMenu === 'prefs' || Game.onMenu === 'log') {
+			if (!MOD._menuChanging && (Game.onMenu === 'stats' || Game.onMenu === 'prefs' || Game.onMenu === 'log')) {
 				var menu = l('menu');
 				if (menu) {
 					var firstTitle = menu.querySelector('.subsection > .title');
@@ -615,6 +634,10 @@ Game.registerMod("screen reader accessibility", {
 		MOD.gardenSnapshotInitialized = false;
 		MOD.stockMarketWrapped = false;
 		MOD.highestOwnedBuildingId = -1;
+		// @steam-only begin
+		MOD.initGreenhouseAccessibility();
+		MOD.initFrozenCookiesAccessibility();
+		// @steam-only end
 		setTimeout(function() {
 			// Hide floating text particles (Lucky, Frenzy, etc.) — already announced via live regions
 			var particles = l('particles');
@@ -657,6 +680,11 @@ Game.registerMod("screen reader accessibility", {
 		MOD.lastBuyBulk = Game.buyBulk;
 		MOD.lastStoreRefresh = Game.storeToRefresh;
 		Game.registerHook('reset', function(hard) {
+			// @steam-only begin
+			MOD.clearGreenhouseAccessibility();
+			MOD.clearFrozenCookiesAccessibility();
+			MOD.clearFrozenCookiesShortcutShield();
+			// @steam-only end
 			MOD.minigameInitDone = {};
 			MOD.gardenBuildPanelWrapped = false;
 			MOD.gardenBuildPlotWrapped = false;
@@ -684,8 +712,8 @@ Game.registerMod("screen reader accessibility", {
 				MOD.filterUnownedBuildings();
 			}, 100);
 		});
-		Game.Notify('Accessibility Enhanced', 'Version 14.1.1', [10, 0], 6);
-		this.announce('Screen Reader Accessibility mod version 14.1.1 loaded.');
+		Game.Notify('Accessibility Enhanced', 'Version 15.0', [10, 0], 6);
+		this.announce('Screen Reader Accessibility mod version 15.0 loaded.');
 	},
 	overrideDrawBuildings: function() {
 		var MOD = this;
@@ -8115,6 +8143,750 @@ Game.registerMod("screen reader accessibility", {
 		}
 	},
 
-	save: function() { return ''; },
-	load: function(s) {}
+	// @steam-only begin
+	// Optional adapters are automatic only in the Steam host. The build removes
+	// this block and every marked call site from the web distribution.
+	steamOptionalModReady: function(id) {
+		if (typeof App === 'undefined' || !App || !Game.ready || Game.modless) return false;
+		var mod = Game.mods && Game.mods[id];
+		// Steam's loader skips disabled entries before script registration. Also
+		// honor its existing descriptor if a loaded entry later becomes disabled.
+		var descriptor = App.mods && App.mods[id];
+		return !!(mod && mod.init === 0 && !(descriptor && descriptor.disabled));
+	},
+	// Adapter for the observed Greenhouse 1.5 UI. No automation calls,
+	// render-function replacement or global keyboard interception belong here.
+	initGreenhouseAccessibility: function() {
+		if (typeof App === 'undefined' || !App) return;
+		if (this._greenhouseHookInstalled) return;
+		this._greenhouseHookInstalled = true;
+		var MOD = this;
+		Game.registerHook('logic', function() {
+			if (Game.T % 15 === 0) MOD.updateGreenhouseAccessibility();
+		});
+	},
+
+	setGreenhouseAttribute: function(state, el, name, value) {
+		value = value === null ? null : String(value);
+		var attrs = state.attributes.get(el);
+		if (!attrs) {
+			attrs = {};
+			state.attributes.set(el, attrs);
+			state.changed.push({el: el, attrs: attrs});
+		}
+		if (!Object.prototype.hasOwnProperty.call(attrs, name)) {
+			attrs[name] = {before: el.getAttribute(name), written: value};
+		}
+		attrs[name].written = value;
+		if (value === null) {
+			if (el.hasAttribute(name)) el.removeAttribute(name);
+		} else this.setAttributeIfChanged(el, name, value);
+	},
+	clearGreenhouseAccessibility: function() {
+		var state = this._greenhouseAccessibility;
+		this._greenhouseAccessibility = null;
+		if (!state) return;
+		Object.keys(state.listeners).forEach(function(type) {
+			state.root.removeEventListener(type, state.listeners[type]);
+		});
+		state.changed.forEach(function(change) {
+			Object.keys(change.attrs).forEach(function(name) {
+				var attr = change.attrs[name];
+				// Do not overwrite a later change made by the original mod.
+				if (change.el.getAttribute(name) !== attr.written) return;
+				if (attr.before === null) change.el.removeAttribute(name);
+				else change.el.setAttribute(name, attr.before);
+			});
+		});
+		state.help.remove();
+	},
+	greenhouseElementVisible: function(state, el) {
+		for (var depth = 0; el && depth < 64; depth++, el = el.parentElement) {
+			if (el.hidden || el.style.display === 'none' || el.style.visibility === 'hidden' || el.getAttribute('aria-hidden') === 'true') return false;
+			if (el === state.root) return true;
+		}
+		return false;
+	},
+	greenhouseOwnsInput: function(state) {
+		var farm = Game.Objects && Game.Objects['Farm'];
+		return this.steamOptionalModReady('grandpas greenhouse') && this._greenhouseAccessibility === state &&
+			Game.mods && Game.mods['grandpas greenhouse'] === state.mod && state.mod.init === 0 &&
+			state.root.isConnected && farm && farm.onMinigame && farm.minigame === state.garden &&
+			!Game.onMenu && !Game.promptOn;
+	},
+	greenhouseSupportedControl: function(el) {
+		if (!el) return false;
+		var act = el.getAttribute('data-act');
+		return ['mode', 'tab', 'pick', 'brush', 'paint', 'libSel', 'libNew', 'libImport', 'libExport',
+			'libRename', 'libDup', 'libDelete', 'libReset', 'useBreed', 'stopUse', 'plantThis', 'stopPlant',
+			'customize', 'dlgOk', 'dlgCancel', 'wipe', 'wipeYes', 'wipeNo', 'clearYes', 'clearNo'].indexOf(act) !== -1;
+	},
+	greenhouseControlId: function(el) {
+		var act = el.getAttribute('data-act'), key = el.getAttribute('data-seed');
+		if (act === 'paint') key = el.getAttribute('data-x') + ',' + el.getAttribute('data-y');
+		else if (act === 'libSel' && key === null) {
+			var name = el.querySelector('.ggLibName');
+			key = name ? name.textContent : el.getAttribute('data-i');
+		}
+		return 'a11yGreenhouseAction-' + act + (key === null ? '' : '-' + encodeURIComponent(key));
+	},
+	pruneGreenhouseAccessibility: function(state) {
+		state.changed = state.changed.filter(function(change) {
+			if (state.root.contains(change.el)) return true;
+			var help = state.helpNodes.get(change.el);
+			if (help) help.remove();
+			state.helpNodes.delete(change.el);
+			state.attributes.delete(change.el);
+			return false;
+		});
+	},
+	bindGreenhouseAccessibility: function(root, mod, garden) {
+		var MOD = this;
+		var help = document.createElement('div');
+		// Referenced hidden text supplies descriptions without duplicate browse stops.
+		help.hidden = true;
+		root.appendChild(help);
+		var state = {root: root, mod: mod, garden: garden, help: help, helpNodes: new WeakMap(),
+			attributes: new WeakMap(), changed: [], nextId: 0, focused: null, listeners: {}};
+		state.listeners.focusin = function(e) { state.focused = e.target; };
+		state.listeners.focusout = function(e) {
+			if (e.relatedTarget && !root.contains(e.relatedTarget)) state.focused = null;
+			else if (!e.relatedTarget) {
+				var target = e.target;
+				// Removal also blurs a still-connected node before detaching it.
+				// Wait for that operation to settle before treating blur as departure.
+				Promise.resolve().then(function() {
+					if (MOD._greenhouseAccessibility === state && state.focused === target &&
+						target.isConnected && document.activeElement !== target) state.focused = null;
+				});
+			}
+		};
+		state.listeners.keydown = function(e) {
+			if (!MOD.greenhouseOwnsInput(state) || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+			var dialog = root.querySelector('#ggDialog');
+			if (dialog && MOD.greenhouseElementVisible(state, dialog)) {
+				if (e.key === 'Escape') {
+					e.preventDefault(); e.stopPropagation();
+					dialog.querySelector('[data-act="dlgCancel"]').click();
+					return;
+				}
+				if (!dialog.contains(e.target)) return;
+				if (e.target.id === 'ggDlgInput' && e.key === 'Enter') {
+					e.preventDefault(); e.stopPropagation();
+					if (!e.repeat) dialog.querySelector('[data-act="dlgOk"]').click();
+					return;
+				}
+			}
+			var wipe = root.querySelector('#ggWipeRow');
+			if (e.key === 'Escape' && wipe && MOD.greenhouseElementVisible(state, wipe)) {
+				e.preventDefault(); e.stopPropagation();
+				wipe.querySelector('[data-act="wipeNo"]').click();
+				return;
+			}
+			// Native fields keep their own Space, Enter, arrows and typing behavior.
+			if (!e.target || /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName) || e.target.isContentEditable) return;
+			var control = e.target.closest('[data-act]');
+			if (!MOD.greenhouseSupportedControl(control) || !MOD.greenhouseElementVisible(state, control) ||
+				control.disabled || control.getAttribute('aria-disabled') === 'true') return;
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault(); e.stopPropagation();
+				if (!e.repeat) control.click();
+			}
+		};
+		// Registered after the native delegated handlers; observe their result,
+		// never duplicate their work or report a state inferred from a keypress.
+		state.listeners.click = function(e) {
+			var control = e.target.closest && e.target.closest('[data-act]');
+			if (!MOD.greenhouseOwnsInput(state) || !MOD.greenhouseSupportedControl(control)) return;
+			var act = control.getAttribute('data-act');
+			if (['libNew', 'libRename', 'libDelete', 'libReset', 'libImport', 'libExport'].indexOf(act) !== -1) state.dialogOpener = control.id;
+			MOD.updateGreenhouseAccessibility();
+			if (!MOD.greenhouseOwnsInput(state)) return;
+			var target = null, wipe = root.querySelector('#ggWipeRow');
+			var dialog = root.querySelector('#ggDialog');
+			if (dialog && MOD.greenhouseElementVisible(state, dialog)) {
+				if (state.dialogOpener && !dialog.contains(document.activeElement)) {
+					target = dialog.querySelector('#ggDlgInput, #ggDlgText, [data-act="dlgCancel"]');
+				}
+				var message = dialog.querySelector('#ggDlgMsg');
+				if (act === 'dlgOk' && message && message.textContent) MOD.announce(message.textContent);
+			} else if ((act === 'dlgOk' || act === 'dlgCancel') && state.dialogOpener) {
+				target = l(state.dialogOpener) || root.querySelector('#ggTab-layouts');
+				state.dialogOpener = null;
+			} else if (act === 'wipe' && wipe && MOD.greenhouseElementVisible(state, wipe)) target = wipe.querySelector('[data-act="wipeNo"]');
+			else if ((act === 'wipeYes' || act === 'wipeNo') && wipe && !MOD.greenhouseElementVisible(state, wipe)) target = root.querySelector('#ggWipeBtn');
+			else if ((act === 'clearYes' || act === 'clearNo') && !MOD.greenhouseElementVisible(state, control)) {
+				target = root.querySelector('#ggMode-' + mod.getSettings().mode);
+			}
+			if (target && MOD.greenhouseElementVisible(state, target)) target.focus();
+		};
+		state.listeners.change = function() { MOD.updateGreenhouseAccessibility(); };
+		Object.keys(state.listeners).forEach(function(type) { root.addEventListener(type, state.listeners[type]); });
+		if (root.contains(document.activeElement)) state.focused = document.activeElement;
+		return state;
+	},
+	labelGreenhouseAccessibility: function(state, settings) {
+		var MOD = this, root = state.root;
+		MOD.pruneGreenhouseAccessibility(state);
+		function attr(el, name, value) { if (el) MOD.setGreenhouseAttribute(state, el, name, value); }
+		function describe(el, text) {
+			text = MOD.stripHtml(text);
+			var node = state.helpNodes.get(el);
+			if (!text) {
+				if (node) {
+					if (el.getAttribute('aria-describedby') === node.id) {
+						attr(el, 'aria-describedby', state.attributes.get(el)['aria-describedby'].before);
+					}
+					node.remove();
+					state.helpNodes.delete(el);
+				}
+				return;
+			}
+			if (!node) {
+				node = document.createElement('span');
+				node.id = 'a11yGreenhouseHelp-' + (++state.nextId);
+				state.help.appendChild(node);
+				state.helpNodes.set(el, node);
+			}
+			MOD.setTextIfChanged(node, text);
+			attr(el, 'aria-describedby', node.id);
+		}
+		root.querySelectorAll('.ggTitle, .ggHead, .ggSubHead').forEach(function(el) {
+			attr(el, 'role', 'heading');
+			attr(el, 'aria-level', el.classList.contains('ggTitle') ? '3' : el.classList.contains('ggHead') ? '4' : '5');
+		});
+		root.querySelectorAll('[data-act]').forEach(function(el) {
+			if (!MOD.greenhouseSupportedControl(el)) return;
+			attr(el, 'role', 'button'); attr(el, 'tabindex', '0');
+			var act = el.getAttribute('data-act');
+			if (!el.id) attr(el, 'id', MOD.greenhouseControlId(el));
+			if (act === 'mode') {
+				attr(el, 'aria-label', el.textContent.trim() + ', automation mode');
+				attr(el, 'aria-pressed', settings.mode === el.getAttribute('data-mode'));
+			} else if (act === 'tab') attr(el, 'aria-pressed', settings.tab === el.getAttribute('data-tab'));
+			else if (act === 'brush' || act === 'pick') {
+				var seed = el.getAttribute('data-seed'), plant = state.garden.plants && state.garden.plants[seed];
+				var name = plant ? plant.name : el.textContent.trim();
+				attr(el, 'aria-label', name + (act === 'brush' ? ', paint brush' : ', breeding target'));
+				attr(el, 'aria-pressed', el.classList.contains('ggSel'));
+			} else if (act === 'libSel') attr(el, 'aria-pressed', el.classList.contains('ggSel'));
+			else if (act === 'paint') {
+				attr(el, 'aria-label', 'Row ' + (Number(el.getAttribute('data-y')) + 1) + ', column ' +
+					(Number(el.getAttribute('data-x')) + 1) + ', ' + MOD.stripHtml(el.getAttribute('data-tip')).replace(/ - click to paint$/, ''));
+			}
+			var text = el.getAttribute('data-tip') || state.mod.getHelp(el.getAttribute('data-help'));
+			describe(el, text);
+		});
+		['ggGrid', 'ggCustGrid', 'ggEditGrid'].forEach(function(id) {
+			var grid = root.querySelector('#' + id);
+			if (!grid) return;
+			attr(grid, 'role', 'group');
+			attr(grid, 'aria-label', id === 'ggEditGrid' ? 'Layout editor' : 'Layout preview');
+			grid.querySelectorAll('.ggCell').forEach(function(el, index) {
+				if (el.getAttribute('data-act') === 'paint') return;
+				var locked = el.classList.contains('ggLocked');
+				attr(el, 'role', 'img');
+				attr(el, 'tabindex', locked ? '-1' : '0');
+				attr(el, 'aria-label', 'Row ' + (Math.floor(index / 6) + 1) + ', column ' + (index % 6 + 1) + ', ' +
+					(locked ? 'locked' : MOD.stripHtml(el.getAttribute('data-tip')) || 'empty'));
+			});
+		});
+		var dialog = root.querySelector('#ggDialog');
+		if (dialog) {
+			var question = dialog.querySelector('.ggAlertText');
+			if (question) {
+				attr(question, 'id', 'a11yGreenhouseDialogQuestion');
+				attr(dialog, 'role', 'group'); attr(dialog, 'aria-labelledby', question.id);
+				dialog.querySelectorAll('input, textarea').forEach(function(el) {
+					attr(el, 'aria-labelledby', question.id); attr(el, 'aria-describedby', 'ggDlgMsg');
+				});
+				dialog.querySelectorAll('[data-act]').forEach(function(el) { attr(el, 'aria-describedby', question.id); });
+			}
+		}
+		root.querySelectorAll('.ggSetItem').forEach(function(item) {
+			var input = item.querySelector('input'), help = item.querySelector('.ggSetHelp');
+			if (!input || !help) return;
+			if (!help.id) attr(help, 'id', 'a11yGreenhouseSetting-' + input.id);
+			attr(input, 'aria-describedby', help.id);
+		});
+		['ggProgress', 'ggRecipe', 'ggStatus', 'ggModeHint'].forEach(function(id) {
+			var el = root.querySelector('#' + id);
+			if (!el) return;
+			attr(el, 'tabindex', '0');
+			describe(el, state.mod.getHelp(el.getAttribute('data-help')));
+		});
+		var choice = root.querySelector('#ggChoice'), choiceLabel = root.querySelector('#ggChoiceLabel');
+		if (choice && choiceLabel) {
+			attr(choice, 'aria-labelledby', choiceLabel.id);
+			describe(choice, state.mod.getHelp(choice.getAttribute('data-help')));
+		}
+		var wipe = root.querySelector('#ggWipeRow');
+		if (wipe) {
+			var question = wipe.querySelector('.ggAlertText');
+			if (question) {
+				if (!question.id) attr(question, 'id', 'a11yGreenhouseWipeQuestion');
+				wipe.querySelectorAll('[data-act]').forEach(function(el) { attr(el, 'aria-describedby', question.id); });
+			}
+		}
+	},
+	updateGreenhouseAccessibility: function() {
+		var MOD = this, mod = Game.mods && Game.mods['grandpas greenhouse'];
+		var farm = Game.Objects && Game.Objects['Farm'];
+		var root = l('grandpasGreenhousePanel');
+		if (!MOD.steamOptionalModReady('grandpas greenhouse') || !root || !farm || !farm.minigameLoaded || !farm.minigame) {
+			MOD.clearGreenhouseAccessibility();
+			return;
+		}
+		if (MOD._greenhouseFailure && MOD._greenhouseFailure.mod === mod && MOD._greenhouseFailure.root === root) return;
+		try {
+			if (mod.version !== '1.5' || typeof mod.getSettings !== 'function' || typeof mod.getHelp !== 'function') throw new Error('Unsupported version or missing state/help API');
+			if (!root.querySelector('.ggTitle') || !root.querySelector('#ggMode-off') || !root.querySelector('#ggTab-settings') || !root.querySelector('#ggTabSettings')) throw new Error('Unsupported panel structure');
+			var settings = mod.getSettings();
+			if (!settings || typeof settings.mode !== 'string' || typeof settings.tab !== 'string') throw new Error('Unavailable mode or page state');
+			var old = MOD._greenhouseAccessibility, restore = null;
+			if (old && old.mod === mod && old.garden === farm.minigame && old.focused && old.focused.id && !old.focused.isConnected &&
+				document.activeElement === document.body && farm.onMinigame && !Game.onMenu && !Game.promptOn) restore = old.focused.id;
+			if (!old || old.root !== root || old.mod !== mod || old.garden !== farm.minigame) {
+				MOD.clearGreenhouseAccessibility();
+				MOD._greenhouseAccessibility = MOD.bindGreenhouseAccessibility(root, mod, farm.minigame);
+				if (old && old.mod === mod && old.garden === farm.minigame) MOD._greenhouseAccessibility.dialogOpener = old.dialogOpener;
+			}
+			MOD.labelGreenhouseAccessibility(MOD._greenhouseAccessibility, settings);
+			if (restore) {
+				var target = l(restore);
+				if (target && MOD.greenhouseOwnsInput(MOD._greenhouseAccessibility) && MOD.greenhouseElementVisible(MOD._greenhouseAccessibility, target)) target.focus();
+			}
+			MOD._greenhouseFailure = null;
+		} catch (error) {
+			MOD.clearGreenhouseAccessibility();
+			MOD._greenhouseFailure = {mod: mod, root: root};
+			console.error('[A11y Mod] Greenhouse adapter unavailable:', error);
+			MOD.announce("Grandpa's Greenhouse accessibility unavailable, base game access is unchanged.");
+		}
+	},
+	// Frozen Cookies 2.052.8 replaces its menu updater whenever FCStart runs.
+	// Wrap that installer, not FCStart (which also controls automation timers).
+	initFrozenCookiesAccessibility: function() {
+		if (typeof App === 'undefined' || !App) return;
+		if (this._frozenCookiesHookInstalled) return;
+		this._frozenCookiesHookInstalled = true;
+		var MOD = this;
+		Game.registerHook('logic', function() {
+			if (Game.T % 15 === 0) MOD.updateFrozenCookiesAccessibility();
+		});
+		MOD.updateFrozenCookiesAccessibility();
+	},
+	frozenCookiesShortcutsReady: function() {
+		var fc = window.FrozenCookies;
+		// Shortcut ownership needs no menu, graph, settings schema or bank data.
+		return this.steamOptionalModReady('frozen_cookies') && !!(fc && fc.version === '2.052.8' && fc.branch === 'erb-');
+	},
+	clearFrozenCookiesShortcutShield: function() {
+		var shield = this._frozenCookiesShortcutShield;
+		this._frozenCookiesShortcutShield = null;
+		if (shield) shield.root.removeEventListener('keydown', shield.listener, false);
+	},
+	updateFrozenCookiesShortcutShield: function() {
+		var MOD = this, root = document.documentElement;
+		if (!MOD.frozenCookiesShortcutsReady() || !root) { MOD.clearFrozenCookiesShortcutShield(); return; }
+		if (MOD._frozenCookiesShortcutShield && MOD._frozenCookiesShortcutShield.root === root) return;
+		MOD.clearFrozenCookiesShortcutShield();
+		var listener = function(e) {
+			// Recheck the live owner at delivery, not only the bounded discovery tick.
+			if (!MOD.frozenCookiesShortcutsReady()) { MOD.clearFrozenCookiesShortcutShield(); return; }
+			// fc_main's anonymous document bubble listener tests only these keyCodes,
+			// not target, modifiers, repeats or defaultPrevented. Stop before document,
+			// AFTER native/adapted field and button handlers; do not cancel editing
+			// defaults or stop other handlers on this node. FCshortcuts is never set.
+			if ([65, 66, 67, 69, 82, 83, 87].indexOf(e.keyCode) === -1) return;
+			e.stopPropagation();
+			// The game's window handler queues Ctrl+S, rather than calling WriteSave.
+			// Preserve its exact ascension gate here, since that window path is now
+			// shielded too. Base feedback runs on the same HTML node, exactly once.
+			if (e.ctrlKey && e.keyCode === 83 && !Game.OnAscend && Game.AscendTimer == 0) {
+				Game.toSave = true; e.preventDefault();
+			}
+		};
+		root.addEventListener('keydown', listener, false);
+		MOD._frozenCookiesShortcutShield = {root: root, listener: listener};
+	},
+	frozenCookiesGraphOpen: function() {
+		var graph = l('statGraphContainer');
+		return !!(graph && graph.isConnected && graph.closest('.ui-dialog') && graph.getClientRects().length);
+	},
+	frozenCookiesReadoutOwner: function(state) {
+		return this._frozenCookiesAccessibility === state && this.steamOptionalModReady('frozen_cookies') &&
+			window.FrozenCookies === state.fc && Game.mods['frozen_cookies'] === state.mod;
+	},
+	wrapFrozenCookiesReadoutProducers: function(state) {
+		var MOD = this;
+		if (typeof window.drawCircles === 'function' && window.drawCircles !== state.drawWrapper) {
+			var draw = window.drawCircles;
+			state.drawOriginal = draw;
+			state.drawWrapper = function(rows) {
+				var result = draw.apply(this, arguments);
+				if (MOD.frozenCookiesReadoutOwner(state)) {
+					// updateTimers creates this array even with fancyui OFF. Observe its
+					// finished output, never invoke calculations or turn drawing on.
+					try {
+						state.infobox = Array.isArray(rows) ? rows.filter(function(row) { return row && row.name; }).map(function(row) {
+							return String(row.name) + (row.display ? ': ' + row.display : '');
+						}) : null;
+						if (state.infobox && typeof window.cpsBonus === 'function' && typeof window.clickBuffBonus === 'function') {
+							// The same expression/formatter as updateTimers' bottom canvas label.
+							state.infobox.push('Frenzy: ' + window.fcBeautify(window.cpsBonus() * window.clickBuffBonus()));
+						}
+					} catch (error) { state.infobox = null; }
+				}
+				return result;
+			};
+			window.drawCircles = state.drawWrapper;
+		}
+		if (typeof window.viewStatGraphs === 'function' && window.viewStatGraphs !== state.graphWrapper) {
+			var graphs = window.viewStatGraphs;
+			state.graphOriginal = graphs;
+			state.graphWrapper = function() {
+				var wasOpen = MOD.frozenCookiesGraphOpen(), result = graphs.apply(this, arguments);
+				if (MOD.frozenCookiesReadoutOwner(state)) MOD.syncFrozenCookiesGraphReadout(state, !wasOpen);
+				return result;
+			};
+			window.viewStatGraphs = state.graphWrapper;
+		}
+	},
+	createFrozenCookiesReadouts: function(state, parent, graphOnly) {
+		var MOD = this, prefix = graphOnly ? 'a11yFrozenGraph' : 'a11yFrozen';
+		var view = {section: document.createElement('section'), graph: graphOnly};
+		view.section.id = prefix + 'Readouts';
+		var title = document.createElement('h3'); title.id = prefix + 'ReadoutsTitle';
+		title.textContent = graphOnly ? 'Tracked stats text' : 'Frozen Cookies text readouts';
+		view.section.setAttribute('aria-labelledby', title.id); view.section.appendChild(title);
+		var help = document.createElement('p');
+		help.textContent = 'Text is a snapshot. Refresh reads available data without changing collection or automation. Refresh keeps focus on its button; read the data below it.';
+		view.section.appendChild(help);
+		function add(kind, label) {
+			var heading = document.createElement('h4'); heading.textContent = label; view.section.appendChild(heading);
+			var button = document.createElement('button'); button.type = 'button'; button.className = 'option';
+			button.id = prefix + kind + 'Refresh'; button.textContent = 'Refresh ' + label.toLowerCase();
+			var data = document.createElement('div'); data.id = prefix + kind + 'Data';
+			button.setAttribute('aria-controls', data.id); view.section.appendChild(button); view.section.appendChild(data);
+			view[kind] = data;
+			button.addEventListener('click', function() {
+				if (!MOD.frozenCookiesReadoutOwner(state) || Game.promptOn || !view.section.isConnected || button.disabled) return;
+				if (graphOnly ? state.graphReadouts !== view || !MOD.frozenCookiesGraphOpen() :
+					state.menuReadouts !== view || Game.onMenu !== 'fc_menu' || !MOD.frozenCookiesOwnsInput(state)) return;
+				MOD.refreshFrozenCookiesReadout(state, view, kind);
+			});
+		}
+		if (!graphOnly) add('Infobox', 'Infobox text');
+		add('Stats', 'Tracked stats text');
+		parent.appendChild(view.section);
+		if (!graphOnly) MOD.refreshFrozenCookiesReadout(state, view, 'Infobox');
+		MOD.refreshFrozenCookiesReadout(state, view, 'Stats');
+		return view;
+	},
+	refreshFrozenCookiesReadout: function(state, view, kind) {
+		var MOD = this, host = view[kind];
+		try {
+			host.textContent = '';
+			if (kind === 'Infobox') {
+				if (!state.infobox || !state.infobox.length) {
+					host.textContent = 'Infobox data is not available yet. Refresh after Frozen Cookies has drawn it.'; return;
+				}
+				var list = document.createElement('ul');
+				state.infobox.forEach(function(text) { var row = document.createElement('li'); row.textContent = MOD.stripHtml(text); list.appendChild(row); });
+				host.appendChild(list); return;
+			}
+			var samples = state.fc.trackedStats;
+			if (!Array.isArray(samples)) { host.textContent = 'Recorded stats are unavailable.'; return; }
+			if (!samples.length) { host.textContent = 'No recorded samples. Refresh reads existing samples only; statistics collection is unchanged.'; return; }
+			if (typeof window.timeDisplay !== 'function' || typeof window.Beautify !== 'function') {
+				host.textContent = 'Recorded stats formatting is unavailable.'; return;
+			}
+			var table = document.createElement('table'), caption = document.createElement('caption');
+			caption.textContent = 'Recorded samples, ' + samples.length; table.appendChild(caption);
+			var head = document.createElement('thead'), headers = document.createElement('tr');
+			['Time since run start', 'Base CPS', 'Effective CPS', 'Earned HC'].forEach(function(label) {
+				var cell = document.createElement('th'); cell.scope = 'col'; cell.textContent = label; headers.appendChild(cell);
+			});
+			head.appendChild(headers); table.appendChild(head);
+			var body = document.createElement('tbody');
+			samples.forEach(function(sample) {
+				var row = document.createElement('tr');
+				['time', 'baseCps', 'effectiveCps', 'hc'].forEach(function(key) {
+					var cell = document.createElement('td'), value = sample && sample[key];
+					// These are viewStatGraphs' x/y fields and tick formatters. Do not
+					// call saveStats, assign times, or substitute a zero for absent data.
+					cell.textContent = Number.isFinite(value) ? MOD.stripHtml(String(key === 'time' ? window.timeDisplay(value / 1000) : window.Beautify(value))) : 'Unavailable';
+					row.appendChild(cell);
+				});
+				body.appendChild(row);
+			});
+			table.appendChild(body); host.appendChild(table);
+		} catch (error) { host.textContent = 'Text data is unavailable.'; }
+	},
+	syncFrozenCookiesGraphReadout: function(state, opened) {
+		if (!this.frozenCookiesGraphOpen()) return;
+		var graph = l('statGraphContainer');
+		if (!state.graphReadouts || state.graphReadouts.section.parentNode !== graph) {
+			if (state.graphReadouts) state.graphReadouts.section.remove();
+			state.graphReadouts = this.createFrozenCookiesReadouts(state, graph, true);
+		} else if (opened) this.refreshFrozenCookiesReadout(state, state.graphReadouts, 'Stats');
+		// Native jqplot refreshes only #statGraphs. Keep its text sibling stable
+		// until explicit Refresh/reopen; jQuery UI retains Close/Escape/focus return.
+	},
+	frozenCookiesOwnsInput: function(state) {
+		return this.steamOptionalModReady('frozen_cookies') && this._frozenCookiesAccessibility === state &&
+			window.FrozenCookies === state.fc && Game.mods && Game.mods['frozen_cookies'] === state.mod && state.mod.init === 0 &&
+			!Game.promptOn && !this.frozenCookiesGraphOpen();
+	},
+	clearFrozenCookiesAccessibility: function() {
+		var state = this._frozenCookiesAccessibility;
+		this._frozenCookiesAccessibility = null;
+		if (!state) return;
+		state.listeners.forEach(function(item) { item.el.removeEventListener(item.type, item.fn, item.capture); });
+		if (window.FCMenu === state.installerWrapper) window.FCMenu = state.installerOriginal;
+		if (window.userInputPrompt === state.promptWrapper) window.userInputPrompt = state.promptOriginal;
+		if (Game.UpdateMenu === state.updateWrapper) Game.UpdateMenu = state.updateOriginal;
+		if (Game.ClosePrompt === state.closeWrapper) Game.ClosePrompt = state.closeOriginal;
+		if (window.drawCircles === state.drawWrapper) window.drawCircles = state.drawOriginal;
+		if (window.viewStatGraphs === state.graphWrapper) window.viewStatGraphs = state.graphOriginal;
+		if (state.menuReadouts) state.menuReadouts.section.remove();
+		if (state.graphReadouts) state.graphReadouts.section.remove();
+		state.changed.forEach(function(change) {
+			Object.keys(change.attrs).forEach(function(name) {
+				var attr = change.attrs[name];
+				if (change.el.getAttribute(name) !== attr.written) return;
+				if (attr.before === null) change.el.removeAttribute(name);
+				else change.el.setAttribute(name, attr.before);
+			});
+		});
+		if (state.notice) state.notice.remove();
+	},
+	failFrozenCookiesAccessibility: function(state, error) {
+		this.clearFrozenCookiesAccessibility();
+		this._frozenCookiesFailure = {mod: state.mod, fc: state.fc, root: state.root};
+		console.error('[A11y Mod] Frozen Cookies adapter unavailable:', error);
+		this.announce('Frozen Cookies accessibility unavailable, base game access is unchanged.');
+	},
+	wrapFrozenCookiesMenuUpdater: function(state) {
+		if (Game.UpdateMenu === state.updateWrapper) return;
+		var MOD = this, original = Game.UpdateMenu;
+		state.updateOriginal = original;
+		state.updateWrapper = function() {
+			if (MOD._frozenCookiesAccessibility !== state) return original.apply(this, arguments);
+			// Retain the base mod's established freeze-and-hold policy too.
+			if (!MOD._menuChanging && ['stats', 'prefs', 'log'].indexOf(Game.onMenu) !== -1) {
+				var title = state.root.querySelector('.subsection > .title');
+				if (title && title.getAttribute('role') === 'heading') return;
+			}
+			if (Game.onMenu !== 'fc_menu') {
+				state.marker = null; state.groups = null;
+				return original.apply(this, arguments);
+			}
+			var result;
+			// The first native render owns all action handlers and calculations.
+			// Later calls update settings in place; information stays a snapshot.
+			if (!state.marker || !state.root.contains(state.marker)) result = original.apply(this, arguments);
+			try { MOD.labelFrozenCookiesMenu(state); }
+			catch (error) { MOD.failFrozenCookiesAccessibility(state, error); }
+			return result;
+		};
+		Game.UpdateMenu = state.updateWrapper;
+	},
+	bindFrozenCookiesAccessibility: function(mod, fc, root, opener) {
+		var MOD = this;
+		var state = {mod: mod, fc: fc, root: root, opener: opener, attributes: new WeakMap(), changed: [], listeners: [], actions: new Map()};
+		function listen(el, type, fn, capture) {
+			el.addEventListener(type, fn, !!capture);
+			state.listeners.push({el: el, type: type, fn: fn, capture: !!capture});
+		}
+		listen(opener, 'keydown', function(e) {
+			if (!MOD.frozenCookiesOwnsInput(state) || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey ||
+				!opener.getClientRects().length || opener.getAttribute('aria-disabled') === 'true') return;
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault(); e.stopPropagation();
+				if (!e.repeat) { opener.click(); MOD.updateFrozenCookiesAccessibility(); }
+			}
+		});
+		// Capture the exact extra occurrence before its original inline handler
+		// opens a prompt. Some native anchors deliberately share the same ID.
+		listen(root, 'click', function(e) {
+			var control = e.target.closest('[data-a11y-frozen-action]');
+			if (control && MOD.frozenCookiesOwnsInput(state) && Game.onMenu === 'fc_menu') state.lastAction = control;
+		}, true);
+		listen(root, 'click', function() { MOD.updateFrozenCookiesAccessibility(); });
+		listen(root, 'keydown', function(e) {
+			if (!MOD.frozenCookiesOwnsInput(state) || Game.onMenu !== 'fc_menu' || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+			// Real choice buttons keep their native keyboard/default behavior.
+			var control = e.target.closest('[data-a11y-frozen-action]');
+			if (!control || !control.getClientRects().length || control.disabled || control.getAttribute('aria-disabled') === 'true') return;
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault(); e.stopPropagation();
+				if (!e.repeat) control.click();
+			}
+		});
+		state.installerOriginal = window.FCMenu;
+		state.installerWrapper = function() {
+			var result = state.installerOriginal.apply(this, arguments);
+			if (MOD._frozenCookiesAccessibility === state) MOD.wrapFrozenCookiesMenuUpdater(state);
+			return result;
+		};
+		window.FCMenu = state.installerWrapper;
+		state.promptOriginal = window.userInputPrompt;
+		state.promptWrapper = function() {
+			var result = state.promptOriginal.apply(this, arguments);
+			if (MOD._frozenCookiesAccessibility !== state) return result;
+			var input = l('fcGenericInput'), content = l('promptContent');
+			if (Game.promptOn && input && content && content.contains(input)) {
+				var title = content.querySelector('h3'), help = content.querySelector('.block');
+				if (title) {
+					MOD.setGreenhouseAttribute(state, title, 'id', 'a11yFrozenPromptTitle');
+					MOD.setGreenhouseAttribute(state, input, 'aria-labelledby', title.id);
+				}
+				if (help) {
+					MOD.setGreenhouseAttribute(state, help, 'id', 'a11yFrozenPromptHelp');
+					MOD.setGreenhouseAttribute(state, input, 'aria-describedby', help.id);
+				}
+				MOD.promptFocusClaimed = true;
+				var target = state.lastAction;
+				state.promptReturn = {input: input, opener: target && root.contains(target) ? target : null};
+			}
+			return result;
+		};
+		window.userInputPrompt = state.promptWrapper;
+		state.closeOriginal = Game.ClosePrompt;
+		state.closeWrapper = function() {
+			var pending = state.promptReturn, result = state.closeOriginal.apply(this, arguments);
+			// Confirm closes first, then the native FC listener validates/stores.
+			// Restore after both have finished, never before that callback.
+			if (pending) Promise.resolve().then(function() {
+				if (MOD._frozenCookiesAccessibility !== state || state.promptReturn !== pending || Game.promptOn) return;
+				state.promptReturn = null;
+				var active = document.activeElement, prompt = l('prompt');
+				if (l('fcGenericInput') !== pending.input || !MOD.frozenCookiesOwnsInput(state) || Game.onMenu !== 'fc_menu' ||
+					!pending.opener || !root.contains(pending.opener) || (active !== document.body && active !== pending.input && !(prompt && prompt.contains(active)))) return;
+				MOD.updateFrozenCookiesAccessibility();
+				if (pending.opener.getClientRects().length) pending.opener.focus();
+			});
+			return result;
+		};
+		Game.ClosePrompt = state.closeWrapper;
+		return state;
+	},
+	labelFrozenCookiesMenu: function(state) {
+		var MOD = this, root = state.root, fc = state.fc;
+		function attr(el, name, value) { MOD.setGreenhouseAttribute(state, el, name, value); }
+		if (!state.marker || !root.contains(state.marker)) {
+			var marker = root.querySelector('#fcOpenLogPanel');
+			if (!marker || !root.querySelector('button.fc-multichoice-btn')) throw new Error('Unsupported Frozen Cookies menu structure');
+			state.marker = marker; state.groups = []; state.actions.clear();
+			if (state.notice) state.notice.remove();
+			state.notice = document.createElement('p'); state.notice.id = 'a11yFrozenSnapshot';
+			state.notice.textContent = 'Information is a snapshot from when this menu opened. Close and reopen Frozen Cookies to refresh it. Settings and their values stay current. Native letter shortcuts are blocked by accessibility support, regardless of the Shortcuts setting.';
+			root.insertBefore(state.notice, root.firstChild);
+			if (state.menuReadouts) state.menuReadouts.section.remove();
+			state.menuReadouts = MOD.createFrozenCookiesReadouts(state, root, false);
+			root.insertBefore(state.menuReadouts.section, state.notice.nextSibling);
+			root.querySelectorAll('.section, .subsection > .title').forEach(function(el) {
+				attr(el, 'role', 'heading'); attr(el, 'aria-level', el.classList.contains('section') ? '2' : '3');
+			});
+			var notes = Object.keys(fc.preferenceValues).filter(function(key) { return !fc.preferenceValues[key].display; });
+			root.querySelectorAll('.fc-section-heading').forEach(function(el, i) {
+				if (notes[i] !== 'spellNotes' && notes[i] !== 'dragonNotes') { attr(el, 'role', 'heading'); attr(el, 'aria-level', '4'); }
+			});
+			Object.keys(fc.preferenceValues).forEach(function(key) {
+				var pref = fc.preferenceValues[key];
+				if (!pref.display) return;
+				var first = root.querySelector('#' + key + 'Button_0');
+				if (!first) throw new Error('Missing choice group: ' + key);
+				var listing = first.closest('.listing'), hint = listing.querySelector('.fc-hint-label');
+				if (!hint || listing.querySelectorAll('button.fc-multichoice-btn').length !== pref.display.length) throw new Error('Unsupported choice group: ' + key);
+				attr(hint, 'id', 'a11yFrozenHint-' + key);
+				attr(listing, 'role', 'group'); attr(listing, 'aria-labelledby', hint.id);
+				var group = {key: key, hint: hint, pref: pref, buttons: Array.from(listing.querySelectorAll('button.fc-multichoice-btn')), extras: []};
+				var template = document.createElement('div');
+				// This is the loaded mod's own already-rendered schema, not user
+				// input. Parse off-DOM once to retain its plain-text value template;
+				// no template handlers are attached or invoked.
+				if (typeof pref.extras === 'string') template.innerHTML = pref.extras;
+				listing.querySelectorAll('a.option').forEach(function(el) {
+					var source = template.querySelector('a.option[id="' + el.id + '"]');
+					if (!source) throw new Error('Unsupported extra action: ' + key);
+					var identity = key + ':' + el.id;
+					attr(el, 'data-a11y-frozen-action', identity); attr(el, 'role', 'button'); attr(el, 'tabindex', '0');
+					attr(el, 'aria-describedby', hint.id); state.actions.set(identity, el);
+					group.extras.push({el: el, template: source.textContent});
+				});
+				state.groups.push(group);
+			});
+			var olden = root.querySelector('#oldenDays > .icon');
+			if (olden) {
+				attr(olden, 'data-a11y-frozen-action', 'oldenDays'); attr(olden, 'role', 'button'); attr(olden, 'tabindex', '0');
+				attr(olden, 'aria-label', 'Olden days'); state.actions.set('oldenDays', olden);
+			}
+		}
+		state.groups.forEach(function(group) {
+			MOD.setTextIfChanged(group.hint, group.pref.hint.replace(/\$\{(.+)\}/g, function(s, key) { return fc[key]; }));
+			group.buttons.forEach(function(button, index) {
+				attr(button, 'aria-pressed', fc[group.key] === index);
+				attr(button, 'aria-describedby', group.hint.id);
+				var classes = button.className.split(/\s+/).filter(function(name) { return name && name !== 'selected'; });
+				if (fc[group.key] === index) classes.push('selected');
+				attr(button, 'class', classes.join(' '));
+			});
+			group.extras.forEach(function(extra) {
+				var text = extra.template.replace(/\$\{(.+)\}/g, function(s, key) { return window.fcBeautify(fc[key]); });
+				MOD.setTextIfChanged(extra.el, text);
+				attr(extra.el, 'aria-label', (extra.el.id === 'viewStats' ? '' : 'Edit value, ') + text.replace(/ - /g, ', '));
+			});
+		});
+		// Retired menu/prompt generations must not accumulate strong references.
+		state.changed = state.changed.filter(function(change) { return change.el.isConnected; });
+	},
+	updateFrozenCookiesAccessibility: function() {
+		// Input protection is independent of menu shape/capability failures.
+		this.updateFrozenCookiesShortcutShield();
+		var MOD = this, mod = Game.mods && Game.mods['frozen_cookies'], fc = window.FrozenCookies;
+		var root = l('menu'), opener = l('fcButton');
+		if (!MOD.steamOptionalModReady('frozen_cookies') || !fc || !root || !opener) {
+			MOD.clearFrozenCookiesAccessibility(); return;
+		}
+		if (MOD._frozenCookiesFailure && MOD._frozenCookiesFailure.mod === mod && MOD._frozenCookiesFailure.fc === fc && MOD._frozenCookiesFailure.root === root) return;
+		var identity = {mod: mod, fc: fc, root: root};
+		try {
+			if (fc.version !== '2.052.8' || fc.branch !== 'erb-') throw new Error('Unsupported Frozen Cookies version');
+			if (!fc.preferenceValues || !fc.currentBank || !fc.targetBank || !fc.frenzyTimes) {
+				MOD.clearFrozenCookiesAccessibility(); return;
+			}
+			if (typeof window.FCMenu !== 'function' || typeof window.userInputPrompt !== 'function' || typeof window.fcBeautify !== 'function' ||
+				typeof window.setPreferenceDirect !== 'function' || typeof Game.UpdateMenu !== 'function' || typeof Game.ClosePrompt !== 'function') throw new Error('Missing Frozen Cookies UI API');
+			Object.keys(fc.preferenceValues).forEach(function(key) {
+				var choices = fc.preferenceValues[key].display;
+				if (choices && (!Number.isInteger(fc[key]) || fc[key] < 0 || fc[key] >= choices.length)) throw new Error('Unavailable choice state: ' + key);
+			});
+			var state = MOD._frozenCookiesAccessibility;
+			if (!state || state.mod !== mod || state.fc !== fc || state.root !== root || state.opener !== opener ||
+				window.FCMenu !== state.installerWrapper || window.userInputPrompt !== state.promptWrapper || Game.ClosePrompt !== state.closeWrapper) {
+				MOD.clearFrozenCookiesAccessibility();
+				state = MOD.bindFrozenCookiesAccessibility(mod, fc, root, opener); MOD._frozenCookiesAccessibility = state;
+			}
+			MOD.wrapFrozenCookiesMenuUpdater(state);
+			MOD.wrapFrozenCookiesReadoutProducers(state);
+			MOD.syncFrozenCookiesGraphReadout(state, false);
+			MOD.setGreenhouseAttribute(state, opener, 'role', 'button'); MOD.setGreenhouseAttribute(state, opener, 'tabindex', '0');
+			MOD.setGreenhouseAttribute(state, opener, 'aria-label', 'Frozen Cookies'); MOD.setGreenhouseAttribute(state, opener, 'aria-controls', 'menu');
+			MOD.setGreenhouseAttribute(state, opener, 'aria-expanded', Game.onMenu === 'fc_menu');
+			if (Game.onMenu === 'fc_menu') MOD.labelFrozenCookiesMenu(state);
+			else { state.marker = null; state.groups = null; }
+			MOD._frozenCookiesFailure = null;
+		} catch (error) { MOD.failFrozenCookiesAccessibility(identity, error); }
+	},
+	// @steam-only end
+	save: function() {
+		return '';
+	},
+	load: function(s) {
+		// No saved preferences. Ignore older opt-outs; supported Steam adapters
+		// follow the enabled native mod's capabilities automatically.
+	}
 });

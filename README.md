@@ -4,7 +4,7 @@ Cookie Clicker Access makes the game playable with a screen reader. It adds ARIA
 navigation, a heading structure and spoken announcements to the game's interface, and it covers the
 minigames as well as the main screen. NVDA, JAWS, Narrator and VoiceOver all work with it.
 
-The mod runs on the Steam build of Cookie Clicker and on the web version through Tampermonkey.
+This README describes version 15.0. The mod runs on the Steam build of Cookie Clicker and on the web version through Tampermonkey.
 
 This fork exists because of one specific defect: with the upstream mod loaded, Golden Cookies could
 not be clicked at all while Frozen Cookies was running. That is fixed here. The full list of
@@ -21,8 +21,8 @@ Subscribe on the Steam Workshop:
 [Screen Reader Accessibility Enhancements](https://steamcommunity.com/sharedfiles/filedetails/?id=3807399658)
 
 Steam downloads it and the game picks it up on the next launch. Open Options, then Mods, and check
-that **Screen Reader Accessibility Enhancements** is enabled. The mod announces
-"Screen Reader Accessibility mod version 14.1.1 loaded." when it starts.
+that **Screen Reader Accessibility Enhancements** is enabled. Version 15.0 announces
+"Screen Reader Accessibility mod version 15.0 loaded." when it starts. The Workshop item and GitHub downloads are updated separately, so check the announced version after installing.
 
 ### Remove the older accessibility mod first
 
@@ -43,8 +43,7 @@ Two places to check:
 Restart the game after removing them. If you previously installed this mod by copying files into
 `mods\local\`, the Workshop copy replaces that install, so the local folder has to go.
 
-Old saved mod data under the previous ID is orphaned, not lost. The mod stores no state of its own,
-so nothing carries over and nothing breaks. You can clear the old key under Options, Mod data.
+Old saved mod data under the previous ID is left under that ID. Version 15.0 saves no accessibility preferences and ignores older support opt-outs. Greenhouse and Frozen Cookies keep their own settings; those are separate from this mod's data. You can clear the old accessibility key under Options, Mod data.
 
 ### Manual install without the Workshop
 
@@ -67,14 +66,34 @@ Use either the Workshop copy or the manual copy, not both.
 3. Open [Cookie Clicker](https://orteil.dashnet.org/cookieclicker/). The script waits for the game to
    finish loading, then registers itself.
 
-To check that it loaded, open the browser console with F12. It logs
-`Cookie Clicker Accessibility Mod loaded and registered!`, and `Object.keys(Game.mods)` includes
-`screen reader accessibility`.
+The userscript gives the same startup announcement as the Steam mod. To inspect registration in the browser console (F12), check that `Object.keys(Game.mods)` includes `screen reader accessibility`.
+
+The web userscript includes base-game accessibility and the shimmer compatibility fix. It does not include the Steam-only Greenhouse or Frozen Cookies menu, shortcut and text-readout integrations described below.
 
 ## What this fork changes
 
 This fork branches from [Cookie-Clicker-Access](https://github.com/Amsel142857/Cookie-Clicker-Access)
 at version 13.8. Everything below was added here.
+
+### Automatic support for Greenhouse and Frozen Cookies on Steam
+
+Steam support covers Grandpa's Greenhouse 1.5 and Frozen Cookies 2.052.8, branch `erb-`. Each integration starts automatically when its supported mod is enabled, loaded and ready. There is no separate accessibility-support switch in Options. Missing, disabled or still-loading mods are left alone, without absence notices. Detection does not install either mod, enable it or change its automation settings.
+
+The Greenhouse panel has headings, labelled automation modes and settings, breeding targets and readable layout previews. Its layout controls support choosing, creating, renaming, duplicating, deleting, importing, exporting and painting layouts with the keyboard. Tab moves through the controls; Enter or Space activates a button. Escape cancels its name/import dialogs and the layout-wipe confirmation. Native text fields, validation and confirmation still handle the actions.
+
+Frozen Cookies has a keyboard-accessible menu button, section headings, labelled setting choices and numeric-edit prompts. Menu information stays as a snapshot while the menu is open; close and reopen it to refresh that information. Setting choices and edited values update in place.
+
+On Steam, Frozen Cookies' native A, B, C, E, R, S and W letter shortcuts are blocked whenever the supported mod is enabled and initialized, regardless of its Shortcuts setting. Modified letters and held-key repeats are blocked too. The setting itself is left unchanged. Use the menu controls instead; ordinary text entry and Ctrl with S saving remain available.
+
+### Frozen Cookies text readouts on Steam
+
+Open the Frozen Cookies menu and find the Frozen Cookies text readouts heading. Infobox text lists the names and values from Frozen Cookies' own infobox output, including its Frenzy multiplier. If no output is available yet, the readout says so. Refresh infobox text reads the latest available output; it does not turn on fancy UI or force Frozen Cookies to generate new output.
+
+Tracked stats text contains a table of recorded samples with time since run start, base CPS (cookies per second), effective CPS and earned HC (heavenly chips). The time and values use Frozen Cookies' graph formatting. Empty recordings and unavailable values are identified rather than replaced with zeroes.
+
+The text stays unchanged until you refresh it or reopen the menu. Refresh keeps focus on its button, with the data below it, and does not announce every timer tick. It reads existing data without enabling statistics collection or automation.
+
+View Stat Graphs also has a Tracked stats text section. Opening that native graph action still takes Frozen Cookies' own one-shot sample; the separate Refresh tracked stats text button only reads the samples already present. The graph keeps its native Close, Escape and focus-return behavior.
 
 ### Golden Cookies work with automation mods
 
@@ -162,13 +181,14 @@ The repository carries a test harness at `tests/harness.js`, which upstream does
 
 ## Mod compatibility
 
-- **Frozen Cookies:** the mod this fork was made for. Auto-clicking (`autoGC`, `autoReindeer`),
-  auto-buying and Grimoire automation all work, and the accessible shimmer buttons work at the same
-  time.
+- **Frozen Cookies:** the shimmer compatibility fix remains in both distributions. Steam also has automatic menu, shortcut and text-readout support for version 2.052.8, branch `erb-`.
+- **Grandpa's Greenhouse:** Steam has automatic panel and layout accessibility for version 1.5. The integration leaves its automation settings and native actions in charge.
 - **Cookie Garden Helper Reloaded:** automatic planting, harvesting and soil rotation run without
   disturbing the garden grid's arrow key navigation.
 - **CCSE (Cookie Clicker Script Extender):** supported as a mod loader.
 - **Cookie Assistant:** runs alongside with no known conflicts.
+
+Frozen Cookies' experimental 100% Consistency Combo is off by default. If enabled, its Garden stage can harvest the plot and request Whiskerbloom planting without consulting Greenhouse's layout or clearing confirmation. Frozen Cookies also harvests the Garden as part of its reset route. Cookie Clicker Access does not coordinate or disable either mod's automation and does not prevent this conflict.
 
 Load order matters when two mods wrap the same game function. If something behaves oddly after
 installing, check the order in Options, Mods. A newly installed mod is added at the bottom of the
@@ -276,8 +296,7 @@ chmod +x build-userscript.sh
 ./build-userscript.sh
 ```
 
-The script writes `cookie-clicker-accessibility.user.js`, ready to import into Tampermonkey. Steam
-testing does not need this step.
+The script writes `cookie-clicker-accessibility.user.js`, ready to import into Tampermonkey. It removes the Steam-only optional-mod integrations from the web bundle while retaining the base-game shimmer compatibility fix. Steam testing does not need this step.
 
 ## Running the tests
 
@@ -289,25 +308,20 @@ root:
 node tests/harness.js
 ```
 
-It reports 338 passing checks against the current `main.js`. Point it at another copy with the
-`CC_MAIN` environment variable to compare behaviour:
+Point it at another copy with the `CC_MAIN` environment variable to compare behaviour:
 
 ```bash
 CC_MAIN=/path/to/other/main.js node tests/harness.js
 ```
 
-The harness checks the logic, not the screen reader experience. The v14.1 Stock Market fix has been
-confirmed in game with NVDA. The Cursor and Pantheon changes passed isolated browser checks, but
-their in-game NVDA checks are still pending. The revised v14.1.1 season buttons have a passing
-player report. The restored flavor descriptions passed browser checks; their in-game screen
-reader check is still pending.
+The harness checks the logic, not the screen reader experience.
 
 ## Credits
 
 - Original mod: [FioraXena](https://github.com/FioraXena/Cookie-Clicker-Enhanced-NVDA-Accessibility-Steam-Only-),
   version 12.
 - Versions 13.0 to 13.8: [Amsel](https://github.com/Amsel142857/Cookie-Clicker-Access).
-- This fork, versions 13.9 to 14.1.1:
+- This fork, versions 13.9 to 15.0:
   [VIPPotato](https://github.com/VIPPotato/Cookie-Clicker-Access-frozen-cookies-fix).
 - Tampermonkey userscript port: [guilevi](https://github.com/guilevi).
 - Cookie Clicker itself: Orteil and DashNet.
