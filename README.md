@@ -181,8 +181,8 @@ The repository carries a test harness at `tests/harness.js`, which upstream does
 
 ## Mod compatibility
 
-- **Frozen Cookies:** the shimmer compatibility fix remains in both distributions. Steam also has automatic menu, shortcut and text-readout support for version 2.052.8, branch `erb-`.
-- **Grandpa's Greenhouse:** Steam has automatic panel and layout accessibility for version 1.5. The integration leaves its automation settings and native actions in charge.
+- **[Frozen Cookies fork](https://steamcommunity.com/sharedfiles/filedetails/?id=2816199538):** the shimmer compatibility fix remains in both distributions. Steam also has automatic menu, shortcut and text-readout support for version 2.052.8, branch `erb-`.
+- **[Grandpa's Greenhouse](https://steamcommunity.com/sharedfiles/filedetails/?id=3792850996):** Steam has automatic panel and layout accessibility for version 1.5. The integration leaves its automation settings and native actions in charge.
 - **Cookie Garden Helper Reloaded:** automatic planting, harvesting and soil rotation run without
   disturbing the garden grid's arrow key navigation.
 - **CCSE (Cookie Clicker Script Extender):** supported as a mod loader.
